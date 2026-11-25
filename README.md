@@ -1,6 +1,25 @@
 # Cloudy
 
-> **Apple Music 歌词动效分支**（`feat/apple-music-lyrics`）：基于上游 **1.3.9**，同步 `upstream/main` 后续更新。保留弹簧滚动、逐行交错延迟、景深模糊和左对齐缩放；逐字歌词继续使用原版解析与渲染，并保留上游的歌词修复和新功能。
+## 本分支说明 (feat/apple-music-lyrics)
+
+**基线版本**：当前分支已同步合并上游原项目 [nya-owo/cloudy](https://github.com/nya-owo/cloudy) 至 **v1.3.9**，并同步了 `upstream/main` 的后续更新。
+
+### 核心改动
+
+- **Apple Music 风格歌词动效**：实现弹簧物理滚动（Spring Physics）与上下行交错延迟（Staggered Delay），让歌词随演唱自然过渡。
+- **景深模糊与焦点缩放**：非高亮行随距离呈现高斯模糊与透明度衰减，高亮行以左侧为锚点微幅缩放；手动滚动时自动解除模糊，停止滚动后恢复跟随与聚焦。
+- **完整保留原版逐字歌词**：复用原项目的逐字解析与高亮渲染，兼顾歌词动效与原版逐字体验。
+
+### 下载与使用
+
+前往 [本仓库 Releases](https://github.com/longlongshang/cloudy/releases) 下载，当前版本为 [v1.3.9-apple-lyrics](https://github.com/longlongshang/cloudy/releases/tag/v1.3.9-apple-lyrics)，提供 Windows x64 便携版与安装包：
+
+- **便携版（ZIP）**：解压全部文件后直接运行 `Cloudy.exe`，保留同目录的字体和图标资源。
+- **安装包（EXE）**：运行安装程序，按向导完成安装后启动 Cloudy。
+
+以下保留原作者的项目文档；下载本分支版本请使用上方链接。
+
+---
 
 <img src="resources/icon.png" width="120" alt="Cloudy 图标">
 
