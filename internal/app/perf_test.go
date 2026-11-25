@@ -11,6 +11,25 @@ import (
 	"netease-music-mygo/internal/netease"
 )
 
+// Stagger and depth effects must stop asking for frames once paused lyrics have returned from manual reading.
+func TestLyricFollowIdleAfterManualScroll(t *testing.T) {
+	a, tt := lyricFollowTester()
+	tt.Wheel(300, 300, 0, 120)
+	tt.Advance(500 * time.Millisecond)
+	tt.Frame()
+	for range 4 {
+		tt.Advance(2 * time.Second)
+		tt.Frame()
+	}
+	if a.lyricGlide.on || !a.lyricGlide.took.IsZero() {
+		t.Fatal("paused lyrics did not finish returning from manual reading")
+	}
+	tt.Advance(time.Second)
+	if tt.FramePending() {
+		t.Fatal("paused lyrics kept requesting frames after the stagger settled")
+	}
+}
+
 // Expanding lyric export options must stop requesting frames once the dialog has settled.
 func TestLyricDownloadStopsAnimating(t *testing.T) {
 	a := newTestApp()

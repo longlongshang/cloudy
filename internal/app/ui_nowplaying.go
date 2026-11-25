@@ -846,37 +846,32 @@ func (a *app) lyricsPane(c *ui.Context, tr *netease.Track, h float32) bool {
 	beforeY := a.lyricScroll.Y
 	lag := a.lyricGlide.step(c, &a.lyricScroll)
 
-	scroll := ui.Scroll(c.Key("lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Padding(0, 8, h*0.5, 0)
+	scroll := ui.Scroll(c.Key("lyrics")).Grow(1).TrackScroll(&a.lyricScroll).Label("歌词列表")
 	a.lyricFace(scroll)
-	// The lines dissolve at the pane's edges rather than being cut there:
-	// a blurred line cut in half showed as a hard seam. The perspective
-	// lyrics fade the pane as a whole, through an image of it; the flat
-	// ones fade each line by where it is (linesStyle.edges), which costs
-	// nothing: redrawing the image each frame made resizing the window
-	// stutter.
-	if a.settings.LyricPerspective {
-		scroll.Effect(scrollEdgeFade{depth: 72, top: easeRange(a.lyricScroll.Y, 0, 16), bottom: 1})
-	}
+	// Fade each row at the pane's edges without an extra bitmap layer
+	// around the native word-by-word text.
 	st := linesStyle{size: 30 * a.lyricScale() * npLyricGrow(a.more.npPaneW), weight: 800, lineHeight: 1.25, shift: shift,
-		edges: !a.settings.LyricPerspective}
+		edges: true, stagger: a.motion != motionOff}
+	if a.motion != motionOff {
+		st.bounce = clamp01(float32(a.settings.LyricBounce))
+	}
 	if a.settings.LyricPerspective {
 		st.tilt = 2 * clamp01(float32(a.settings.LyricTilt))
-		if a.motion != motionOff {
-			st.bounce = clamp01(float32(a.settings.LyricBounce))
-		}
 	}
-	if box := scroll.LayoutBounds(); st.tilt > 0 && box.H > 0 {
-		// The sung line passes through the rightmost point of the arc.
-		st.focusY = max(1, min(box.H, h*0.53-box.Y))
-		st.arcY = box.Y + st.focusY + lag + a.lyricScroll.Y - beforeY
-		st.arcInset, st.arcRadius = min(125, box.W*0.17), box.H*0.82
-		scroll.Padding(st.focusY, 8+st.arcInset*st.tilt, max(h*0.5, box.H-st.focusY), 0).
-			TransformOrigin(0, st.focusY/box.H).RotateY(-19 * st.tilt).Perspective(max(700, box.W*2.7))
+	if box := scroll.LayoutBounds(); box.H > 0 {
+		st.focusY = box.H * 0.38
+		if st.tilt > 0 {
+			// The sung line passes through the rightmost point of the arc.
+			st.arcY = box.Y + st.focusY + lag + a.lyricScroll.Y - beforeY
+			st.arcInset, st.arcRadius = min(125, box.W*0.17), box.H*0.82
+			scroll.TransformOrigin(0, st.focusY/box.H).RotateY(-19 * st.tilt).Perspective(max(700, box.W*2.7))
+		}
+		scroll.Padding(st.focusY, 8+st.arcInset*st.tilt, max(h*0.5, box.H-st.focusY), 0)
 	}
 	// The perspective lyrics blur as they always did; the regular view
 	// as the listener chose. Never to save power.
 	st.blurLevel = clamp01(float32(a.settings.LyricBlurLevel))
-	st.blur = (st.focusY > 0 || a.settings.LyricBlur) && !a.settings.PowerSaver && st.blurLevel > 0
+	st.blur = (st.tilt > 0 || a.settings.LyricBlur) && !a.settings.PowerSaver && st.blurLevel > 0
 	dim, quiet := a.quietShown(c, scroll, tr, lines, loaded)
 	if dim > 0.98 {
 		// Under the hot comment, gone, not drawn faint.
@@ -903,6 +898,7 @@ type linesStyle struct {
 	arcRadius  float32
 	tilt       float32 // 1 preserves the original arc, 0 uses the flat layout
 	bounce     float32 // the strength of the automatic scroll's overshoot
+	stagger    bool    // each row follows the spring a little after the one sung
 	quiet      bool
 	shift      time.Duration // how early they run, as a line clicked seeks
 }
@@ -914,14 +910,77 @@ type linesStyle struct {
 // lit has still to go (lyricGlide). foot, if set, follows the lines.
 func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, pos time.Duration, cur int, lag float32, st linesStyle, foot func()) {
 	pl := a.pl
+	g := &a.lyricGlide
+	g.line = cur
+	if st.stagger && len(g.rows) != len(lines) {
+		g.rows = make([]lyricRowGlide, len(lines))
+		for i := range g.rows {
+			g.rows[i].a = g.a
+		}
+	} else if !st.stagger {
+		g.rows = nil
+	}
+	// Observe even a wheel at an edge, where the scroll offset cannot change.
+	// Leaving the event unhandled preserves MyGo's wheel/trackpad scrolling.
+	scroll.HandleInput(func(ev ui.InputEvent) bool {
+		if ev.Kind == ui.InputScroll && ev.DY != 0 {
+			moving := g.on || g.pending
+			g.take(ev.Time, &a.lyricScroll)
+			edge := a.lyricScroll.Y <= 0 && ev.DY < 0 || a.lyricScroll.Y >= a.lyricScroll.MaxY && ev.DY > 0
+			if moving || edge {
+				// MyGo's underlying offset is already at the target. Apply
+				// this first delta to the visible position we just caught.
+				a.lyricScroll.Y = max(0, min(a.lyricScroll.Y+ev.DY, a.lyricScroll.MaxY))
+				g.set = a.lyricScroll.Y
+				return true
+			}
+		}
+		return false
+	})
+	holding := g.holding(c)
+	g.dragging = false
 	var active ui.Element
 	view := scroll.LayoutBounds()
 	scroll.Children(func() {
-		ui.Column(c).Gap(6).Translate(0, -lag).Children(func() {
+		column := ui.Column(c).Gap(6)
+		column.Children(func() {
+			// Read every row's input before applying transforms or blur.
+			// These elements live only in this build, never in app state.
+			rows := make([]ui.Element, len(lines))
+			for i, l := range lines {
+				line := ui.ButtonBase(c.Key(i)).Column().AlignItems(ui.Start).Padding(10, 12).Radius(14).Gap(6).FocusRing(false).Label(l.Text)
+				rows[i] = line
+				// The row keeps its native click and keyboard actions; crossing
+				// MyGo's drag threshold cancels the click and pans the list.
+				panning := ui.Local(line, "panning", func() bool { return false })
+				_, dy, held := line.Dragged()
+				if held && (dy != 0 || *panning) {
+					*panning = true
+					g.take(c.Now(), &a.lyricScroll)
+					a.lyricScroll.Y = max(0, min(a.lyricScroll.Y-dy, a.lyricScroll.MaxY))
+					g.set, g.dragging, holding = a.lyricScroll.Y, true, true
+					lag = 0
+					if dy != 0 {
+						c.AnimationFrame()
+					}
+				} else if !held && *panning {
+					*panning = false
+					g.take(c.Now(), &a.lyricScroll)
+					holding, lag = true, 0
+				}
+			}
+			column.Translate(0, -lag)
 			for i, l := range lines {
 				l = a.npLine(l)
-				line := ui.ButtonBase(c.Key(i)).Column().AlignItems(ui.Start).Padding(10, 12).Radius(14).Gap(6).FocusRing(false).Label(l.Text)
+				line := rows[i]
 				on := i == cur
+				rowLag := lag
+				if len(g.rows) > i {
+					v, _ := g.rowAt(c.Now(), i)
+					rowLag = float32(v)
+				}
+				bounds := line.LayoutBounds()
+				visible := view.H > 0 && bounds.H > 0 && bounds.Y-rowLag < view.Y+view.H && bounds.Y+bounds.H*1.08-rowLag > view.Y
 				hovered := line.Hovered()
 				alpha := float32(0.28)
 				if on {
@@ -930,11 +989,13 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 					alpha = 0.55
 				}
 				blur := float32(0)
-				if st.blur && cur >= 0 && !on && !hovered && !line.FocusVisible() {
+				if cur >= 0 && !on {
 					distance := abs32(float32(i - cur))
 					alpha *= 1 - 0.5*clamp01((distance-1)/4)
-					k := 2 * st.blurLevel
-					blur = min(4*k, 0.9*distance*k)
+					if st.blur && visible && !holding && !hovered && !line.FocusVisible() {
+						k := 2 * st.blurLevel
+						blur = min(4*k, 0.9*distance*k)
+					}
 				}
 				if st.quiet {
 					// Nearly gone under a hot comment.
@@ -942,7 +1003,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 				}
 				if b := line.LayoutBounds(); st.edges && view.H > 0 && b.H > 0 {
 					// Where it is in the pane, as it shows, held back by lag.
-					mid := b.Y + b.H/2 - lag - view.Y
+					mid := b.Y + b.H/2 - rowLag - view.Y
 					edge := min(easeRange(mid, 0, npLyricEdge), easeRange(view.H-mid, 0, npLyricEdge))
 					if edge < 1 {
 						line.Opacity(edge)
@@ -951,11 +1012,12 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 				if hovered {
 					line.Background(white.Alpha(0.06))
 				}
-				scale := float32(0.94)
+				scale := float32(1)
 				if on {
-					scale = 1
+					scale = 1.06
 				}
-				line.TransformOrigin(0, 0.5)
+				line.TransformOrigin(0, 0.5).MarginEnd(max(8, view.W*0.065))
+				x := float32(0)
 				if bounds := line.LayoutBounds(); st.arcRadius > 0 && bounds.H > 0 {
 					// The left end follows a circle; the line turns gently
 					// outward with its radius as the lyrics roll past.
@@ -964,16 +1026,22 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 					dy = max(-0.8*r, min(0.8*r, dy))
 					dx := float32(math.Sqrt(float64(r*r - dy*dy)))
 					angle := float32(math.Atan2(float64(dy), float64(dx))) * (0.45 * 180 / math.Pi)
-					line.Rotate(angle*st.tilt).Translate(max(0, st.arcInset-(r-dx))*st.tilt, 0)
+					line.Rotate(angle * st.tilt)
+					x = max(0, st.arcInset-(r-dx)) * st.tilt
 				}
+				line.Translate(x, lag-rowLag)
 				line.AnimatePose(ui.Pose{Scale: scale}, ui.Animation{Spring: ui.SpringOptions{Duration: 600 * time.Millisecond, Bounce: 0.1}})
-				glows := on && a.settings.NpLight && !st.quiet
+				glows := on && visible && a.settings.NpLight && !st.quiet && !holding
 				line.Children(func() {
 					// The line fades as a pose, in frames that only paint, rather
 					// than building the view at the display's rate as it does.
 					text := ui.Column(c).AlignItems(ui.Start).Gap(6)
 					text.AnimatePose(ui.Pose{Fade: 1 - alpha}, ui.Animation{Duration: 380 * time.Millisecond})
-					if st.blur {
+					if on || holding || !visible || !st.blur {
+						// A newly active row must shed its old depth blur at once,
+						// as must rows during manual reading or outside the view.
+						text.Jump("depth", 0)
+					} else {
 						text.Blur(text.AnimateTo("depth", blur, ui.Animation{Duration: 300 * time.Millisecond}))
 					}
 					text.Children(func() {
@@ -1024,7 +1092,8 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 	box := scroll.LayoutBounds()
 	focus := lyricFocus{}
 	if st.focusY > 0 {
-		focus = lyricFocus{st.focusY, box.W, box.H, st.size, st.tilt, a.lyricFamily(), a.settings.LyricTrans}
+		focus = lyricFocus{y: st.focusY, top: box.Y, width: box.W, height: box.H, size: st.size,
+			tilt: st.tilt, font: a.lyricFamily(), translation: a.settings.LyricTrans}
 	}
 	// Wait for layout to take the new padding or type size before measuring the target.
 	if focus != a.lyricGlide.focus {
@@ -1038,7 +1107,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 	}
 	// Bring the line sung to the center of the arc, or a third of the way down.
 	// Not while the listener looks through the lines.
-	if cur != a.lyricAt && !a.lyricGlide.holding(c, scroll) {
+	if (cur != a.lyricAt || g.resume) && !holding {
 		if st.focusY == 0 {
 			box = scroll.Bounds()
 		}
@@ -1056,7 +1125,7 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 		}
 		a.lyricAt = cur
 		a.lyricGlide.to(c, &a.lyricScroll, min(max(0, target), a.lyricScroll.MaxY), st.bounce)
-		if a.npK < 0.5 {
+		if a.npK < 0.5 || a.motion == motionOff {
 			// Opening: they are there, rather than scrolling as the view grows.
 			a.lyricGlide.on = false
 		}
@@ -1065,9 +1134,9 @@ func (a *app) timedLines(c *ui.Context, scroll ui.Element, lines []lyrics.Line, 
 
 // lyricFocus records the layout inputs that can move the line relative to the arc.
 type lyricFocus struct {
-	y, width, height, size, tilt float32
-	font                         string
-	translation                  bool
+	y, top, width, height, size, tilt float32
+	font                              string
+	translation                       bool
 }
 
 // lyricGlide scrolls the lyrics to the line sung with a damped spring.
@@ -1095,32 +1164,54 @@ type lyricGlide struct {
 	// The layout changed last frame: an offset moved with it is no
 	// scroll of the listener.
 	reflowed bool
+	rows     []lyricRowGlide
+	line     int
+	resume   bool // return to the sung line even if its index did not change
+	dragging bool
 }
 
-// lyricHold is how long the lines stay where the listener scrolled them
-// before following the song again; lyricHoldOver, while the pointer
-// stays over them.
-const (
-	lyricHold     = 4 * time.Second
-	lyricHoldOver = 10 * time.Second
-)
+type lyricRowGlide struct {
+	a, v  float64
+	delay time.Duration
+	held  float64 // residual position carried with the list during manual reading
+}
+
+// lyricHold starts again with each wheel event, drag or momentum update.
+const lyricHold = 1500 * time.Millisecond
 
 // holding reports whether the lines stay where the listener scrolled
 // them, rather than following the song.
-func (g *lyricGlide) holding(c *ui.Context, scroll ui.Element) bool {
+func (g *lyricGlide) holding(c *ui.Context) bool {
 	if g.took.IsZero() {
 		return false
 	}
-	hold := lyricHold
-	if scroll.Hovered() {
-		hold = lyricHoldOver
+	if g.dragging {
+		g.took = c.Now()
 	}
-	if left := hold - c.Now().Sub(g.took); left > 0 {
-		c.After(left + 20*time.Millisecond)
+	if left := lyricHold - c.Now().Sub(g.took); left > 0 {
+		c.After(left)
 		return true
 	}
 	g.took = time.Time{}
 	return false
+}
+
+// take cancels a pending target as well as its visible spring. The scroll
+// offset must catch what showed, not jump ahead to the automatic target.
+func (g *lyricGlide) take(now time.Time, s *ui.ScrollState) {
+	lag, _ := g.at(now)
+	for i := range g.rows {
+		rowLag, _ := g.rowAt(now, i)
+		g.rows[i].held = rowLag - lag
+	}
+	if g.pending {
+		s.Y = g.target
+	}
+	if g.on {
+		s.Y = max(0, min(s.Y+float32(lag), s.MaxY))
+	}
+	g.on, g.pending, g.resume = false, false, true
+	g.set, g.took = s.Y, now
 }
 
 // lyricOmega is the spring's ω: a line or two away, it comes within half a
@@ -1132,15 +1223,42 @@ func (g *lyricGlide) at(now time.Time) (lag, v float64) {
 	if !g.on {
 		return 0, 0
 	}
-	t := now.Sub(g.start).Seconds()
-	e := math.Exp(-g.decay * t)
-	if g.frequency == 0 {
-		lag := g.a + g.b*t
-		return lag * e, (g.b - g.decay*lag) * e
+	return lyricSpringAt(g.a, g.b, g.decay, g.frequency, max(0, now.Sub(g.start).Seconds()))
+}
+
+func lyricSpringAt(a, b, decay, frequency, t float64) (lag, v float64) {
+	e := math.Exp(-decay * t)
+	if frequency == 0 {
+		lag := a + b*t
+		return lag * e, (b - decay*lag) * e
 	}
-	sin, cos := math.Sincos(g.frequency * t)
-	lag = g.a*cos + g.b*sin
-	return lag * e, (g.frequency*(g.b*cos-g.a*sin) - g.decay*lag) * e
+	sin, cos := math.Sincos(frequency * t)
+	lag = a*cos + b*sin
+	return lag * e, (frequency*(b*cos-a*sin) - decay*lag) * e
+}
+
+func (g *lyricGlide) rowAt(now time.Time, i int) (lag, v float64) {
+	if !g.on {
+		if g.resume {
+			return g.rows[i].held, 0
+		}
+		return 0, 0
+	}
+	r := g.rows[i]
+	t := max(0, now.Sub(g.start).Seconds())
+	delay := r.delay.Seconds()
+	// During the delay, carry the old velocity with drag instead of
+	// stopping a row abruptly when the singer moves on quickly.
+	drag := math.Exp(-10 * min(t, delay))
+	a, v := r.a+r.v*(1-drag)/10, r.v*drag
+	if t < delay {
+		return a, v
+	}
+	b := v + g.decay*a
+	if g.frequency > 0 {
+		b /= g.frequency
+	}
+	return lyricSpringAt(a, b, g.decay, g.frequency, t-delay)
 }
 
 // to scrolls s to target from the next frame, gliding from where it
@@ -1149,7 +1267,13 @@ func (g *lyricGlide) to(c *ui.Context, s *ui.ScrollState, target, bounce float32
 	now := c.Now()
 	lag, v := g.at(now)
 	shown := float64(s.Y) + lag
+	for i := range g.rows {
+		rowLag, velocity := g.rowAt(now, i)
+		g.rows[i] = lyricRowGlide{a: float64(s.Y-target) + rowLag, v: velocity,
+			delay: min(time.Duration(abs32(float32(i-g.line)))*35*time.Millisecond, 200*time.Millisecond)}
+	}
 	g.target, g.pending = target, true
+	g.resume = false
 	g.on = !c.Preferences().ReduceMotion
 	g.start, g.a = now, shown-float64(target)
 	// Long seeks should land gently as well. Limit the bounce of a jump
@@ -1178,19 +1302,26 @@ func (g *lyricGlide) step(c *ui.Context, s *ui.ScrollState) float32 {
 	if s.Y != g.set && reflowed {
 		g.set = s.Y
 	} else if s.Y != g.set {
-		// The listener took over: the offset takes what showed.
-		if g.on {
-			s.Y, g.on = max(0, min(s.Y+float32(lag), s.MaxY)), false
-		}
-		g.set, g.took = s.Y, c.Now()
+		// Scrollbar dragging and keyboard scrolling also catch the rows.
+		g.take(c.Now(), s)
 		return 0
 	}
 	if !g.on {
 		return 0
 	}
 	if math.Abs(lag) < 0.5 && math.Abs(v) < 20 {
-		g.on = false
-		return 0
+		settled := true
+		for i := range g.rows {
+			l, speed := g.rowAt(c.Now(), i)
+			if math.Abs(l) >= 0.5 || math.Abs(speed) >= 20 {
+				settled = false
+				break
+			}
+		}
+		if settled {
+			g.on = false
+			return 0
+		}
 	}
 	c.AnimationFrame()
 	return float32(lag)
