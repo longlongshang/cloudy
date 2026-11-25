@@ -2,6 +2,7 @@ package app
 
 import (
 	"math"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -353,6 +354,18 @@ func (a *app) settingsLyricsPage(k *settingsKit) {
 		k.sub("逐字高亮", "", s.DeskLyrics, func() {
 			k.toggle("desk-words", "逐字高亮", &s.DeskWords, false, nil)
 		})
+		k.sub("竖排", "歌词竖着排列，一字一行，翻译在左侧", s.DeskLyrics, func() {
+			vertical := s.DeskVertical
+			k.toggle("desk-vertical", "竖排桌面歌词", &vertical, false, func() { a.setDeskVertical(vertical) })
+		})
+		k.sub("停止播放时隐藏", "暂停或停止后自动隐藏，继续播放时再出现", s.DeskLyrics, func() {
+			k.toggle("desk-hide-stopped", "停止播放时隐藏桌面歌词", &s.DeskHideStopped, false, nil)
+		})
+		if runtime.GOOS == "windows" {
+			k.sub("全屏时也显示", "关闭时，玩全屏游戏或看全屏视频会自动隐藏桌面歌词，避免掉帧", s.DeskLyrics, func() {
+				k.toggle("desk-over-fullscreen", "全屏时也显示桌面歌词", &s.DeskOverFullscreen, false, nil)
+			})
+		}
 	})
 	k.foot("桌面歌词浮在其他窗口之上；锁定后鼠标会穿过它，不挡住下面的内容。")
 }
@@ -508,10 +521,10 @@ func (a *app) materialGroup(k *settingsKit) {
 				glassKind("bar-glass-kind", sceneBar, func(f bool) { s.BarFrost = f })
 			})
 			k.sub("菜单与浮层玻璃", "菜单、下拉列表、提示和托盘菜单", s.panelGlass(), func() {
-				glassKind("menu-glass-kind", sceneMenu, func(f bool) { s.MenuLiquid = !f })
+				glassKind("menu-glass-kind", sceneMenu, func(f bool) { s.MenuLiquid = new(!f) })
 			})
 			k.sub("对话框与设置玻璃", "对话框、设置和私信面板", s.panelGlass(), func() {
-				glassKind("dialog-glass-kind", sceneDialog, func(f bool) { s.DialogLiquid = !f })
+				glassKind("dialog-glass-kind", sceneDialog, func(f bool) { s.DialogLiquid = new(!f) })
 			})
 			k.sub("分析页卡片玻璃", "播放页「分析」里的两张卡片", s.panelGlass(), func() {
 				glassKind("analysis-glass-kind", sceneAnalysis, func(f bool) { s.AnalysisFrost = f })
@@ -565,6 +578,13 @@ func (a *app) settingsAppearancePage(k *settingsKit) {
 				a.changed()
 			}
 		})
+		// Only where the desktop asks for less motion, or it was turned on:
+		// elsewhere it changes nothing (PR #28).
+		if s.IgnoreSystemMotion || c.Preferences().ReduceMotion || k.searching {
+			k.row("无视系统动效设置", "Windows 关闭了动画效果时，仍按上面的设置播放动画", func() {
+				k.toggle("ignore-system-motion", "无视系统动效设置", &s.IgnoreSystemMotion, false, nil)
+			})
+		}
 		k.row("封面旋转", "播放时播放栏里的封面像黑胶一样转动", func() {
 			k.toggle("bar-spin", "播放栏封面旋转", &s.BarSpin, false, a.leavePowerSaver)
 		})

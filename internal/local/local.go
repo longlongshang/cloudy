@@ -124,6 +124,8 @@ func Read(path string) (*Song, error) {
 		readMP3(f, info.Size(), s)
 	case ".flac":
 		readFLAC(f, info.Size(), s)
+	case ".wav":
+		readWAV(f, info.Size(), s)
 	case ".m4a", ".m4b":
 		readMP4(f, info.Size(), s)
 	case ".aac":

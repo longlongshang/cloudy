@@ -172,11 +172,70 @@ func pillButton(c *ui.Context, icon *ui.SVG, label string, bg, fg ui.Color) ui.E
 	return b
 }
 
+type trackCoverKey struct {
+	account int
+	id      int64
+	local   string
+}
+
+func (a *app) trackCoverIdentity(tr *netease.Track) any {
+	if tr.ID != 0 {
+		return trackCoverKey{account: a.accountGen, id: tr.ID}
+	}
+	if tr.LocalPath != "" {
+		return trackCoverKey{account: a.accountGen, local: tr.LocalPath}
+	}
+	return nil
+}
+
+// coverBitmap fetches url at px and, when hold is true, keeps the element's
+// last displayed artwork while a replacement URL loads. If fallbackPx > 0 and
+// nothing is held yet, an already-cached copy at fallbackPx fills in while px
+// loads.
+func (a *app) coverBitmap(box ui.Element, hold bool, url string, px, fallbackPx int) *ui.Bitmap {
+	art := a.art.get(netease.Sized(url, px), false)
+	bmp := bitmap(art)
+	if !hold {
+		if bmp == nil && fallbackPx > 0 {
+			bmp = bitmap(a.art.peek(netease.Sized(url, fallbackPx)))
+		}
+		return bmp
+	}
+	held := ui.Local(box, "artwork", func() *artwork { return nil })
+	switch {
+	case url == "":
+		*held = nil
+	case bmp != nil:
+		*held = art
+	case bitmap(*held) != nil:
+		bmp = bitmap(*held)
+	case fallbackPx > 0:
+		if small := a.art.peek(netease.Sized(url, fallbackPx)); bitmap(small) != nil {
+			*held = small
+			bmp = small.bmp
+		}
+	}
+	return bmp
+}
+
 // cover shows an artwork, or a placeholder of the same size while it loads.
 func (a *app) cover(c *ui.Context, url string, px int, size, radius float32) ui.Element {
+	return a.coverBox(c, nil, url, px, size, radius)
+}
+
+// trackCover shows a song's cover and keeps its last displayed image while a
+// replacement URL for the same song loads.
+func (a *app) trackCover(c *ui.Context, tr *netease.Track, px int, size, radius float32) ui.Element {
+	return a.coverBox(c, a.trackCoverIdentity(tr), tr.Album.PicURL, px, size, radius)
+}
+
+func (a *app) coverBox(c *ui.Context, key any, url string, px int, size, radius float32) ui.Element {
 	p := a.pal
+	if key != nil {
+		c = c.Key(key)
+	}
 	box := ui.Box(c).Size(size, size).Radius(radius).Center()
-	bmp := bitmap(a.art.get(netease.Sized(url, px), false))
+	bmp := a.coverBitmap(box, key != nil, url, px, 0)
 	in := artIn(box, bmp)
 	if in < 1 {
 		box.Background(p.hover)

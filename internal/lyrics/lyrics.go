@@ -17,7 +17,10 @@ type Line struct {
 	End         time.Duration
 	Text        string
 	Translation string
-	Words       []Word
+	// Roman is how the line reads, in the Latin alphabet: NetEase's
+	// romanization of Japanese, Korean and the like, syllable by syllable.
+	Roman string
+	Words []Word
 	// Timed says the words carry their own times, as NetEase's word-timed
 	// lyrics give them; else they share the line's time evenly.
 	Timed bool
@@ -163,7 +166,7 @@ func KeepTranslations(more, from []Line) []Line {
 		has = has || f.Translation != ""
 	}
 	if !has {
-		return more
+		return KeepRoman(more, from)
 	}
 	for i := range more {
 		more[i].Translation = ""
@@ -172,21 +175,55 @@ func KeepTranslations(more, from []Line) []Line {
 		if f.Translation == "" {
 			continue
 		}
-		best, bestGap := -1, 1500*time.Millisecond
-		for i := range more {
-			gap := more[i].At - f.At
-			if gap < 0 {
-				gap = -gap
-			}
-			if gap < bestGap {
-				best, bestGap = i, gap
-			}
-		}
-		if best >= 0 && more[best].Translation == "" {
+		if best := nearest(more, f.At); best >= 0 && more[best].Translation == "" {
 			more[best].Translation = f.Translation
 		}
 	}
+	return KeepRoman(more, from)
+}
+
+// KeepRoman gives the lines of more the romanizations of from, each to the
+// line nearest its time, where more has none of its own.
+func KeepRoman(more, from []Line) []Line {
+	for _, f := range from {
+		if f.Roman == "" {
+			continue
+		}
+		if best := nearest(more, f.At); best >= 0 && more[best].Roman == "" {
+			more[best].Roman = f.Roman
+		}
+	}
 	return more
+}
+
+// AddRoman pairs lines with the romanization roman, an LRC: each of its
+// lines goes to the line nearest its time, as translations do.
+func AddRoman(lines []Line, roman string) []Line {
+	for _, r := range parseLRC(roman) {
+		if r.Text == "" {
+			continue
+		}
+		if best := nearest(lines, r.At); best >= 0 && lines[best].Roman == "" {
+			lines[best].Roman = r.Text
+		}
+	}
+	return lines
+}
+
+// nearest returns the line of lines nearest at, within a second and a half,
+// or -1.
+func nearest(lines []Line, at time.Duration) int {
+	best, bestGap := -1, 1500*time.Millisecond
+	for i := range lines {
+		gap := lines[i].At - at
+		if gap < 0 {
+			gap = -gap
+		}
+		if gap < bestGap {
+			best, bestGap = i, gap
+		}
+	}
+	return best
 }
 
 // mergeLyrics pairs timed lines with their translations, without words'

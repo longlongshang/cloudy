@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"strings"
 	"testing"
@@ -78,8 +79,94 @@ func TestParseSupport(t *testing.T) {
 	if codes := supportCodes(); codes[0] == nil || codes[1] == nil {
 		t.Error("the pay codes built in do not decode")
 	}
-	if supportInitial("midnight") != "M" || supportInitial("") != "?" || supportInitial("云边") != "云" {
+	if supportInitial("midnight") != "M" || supportInitial("") != "?" || supportInitial("云边") != "云" || supportInitial("꧁꫞「Six」☬「Seven」꫞꧂") != "S" || supportInitial("꧁꧂") != "꧁" {
 		t.Error("initials")
+	}
+	// Every name built in keeps a seat of its own.
+	seen := map[int]bool{}
+	for _, s := range embeddedSupport().Supporters {
+		if s.No <= 0 || seen[s.No] {
+			t.Errorf("%q has seat %d", s.Name, s.No)
+		}
+		seen[s.No] = true
+	}
+}
+
+// Seats: kept where the file gives them, the rest, earliest first, to the
+// first seats free; the hall grows by a hundred once full.
+func TestSupportSeats(t *testing.T) {
+	d := supportData{Supporters: []supporter{{Name: "newest"}, {Name: "kept", No: 1}, {Name: "twin", No: 1}, {Name: "third", No: 3}, {Name: "oldest"}}}
+	got := d.seated()
+	want := []string{"kept", "oldest", "third", "twin", "newest"}
+	for i, s := range got {
+		if s.Name != want[i] || s.No != i+1 {
+			t.Fatalf("seated %+v", got)
+		}
+	}
+	if seats, next := supportSeats(got); seats != 100 || next != 6 {
+		t.Errorf("seats %d next %d", seats, next)
+	}
+	if seats, next := supportSeats(nil); seats != 100 || next != 1 {
+		t.Errorf("empty: seats %d next %d", seats, next)
+	}
+	var full []supporter
+	for i := range 100 {
+		full = append(full, supporter{No: i + 1, Name: fmt.Sprint(i)})
+	}
+	if seats, next := supportSeats(full); seats != 200 || next != 101 {
+		t.Errorf("full: seats %d next %d", seats, next)
+	}
+	if r, s := seatPlace(26); r != 2 || s != 1 {
+		t.Errorf("seat 26 at %d %d", r, s)
+	}
+}
+
+// A name cut short in its row shows whole when the row is clicked; past
+// twelve names, 查看全部 shows them all.
+func TestSupportWallNames(t *testing.T) {
+	a := newTestApp()
+	long := "꧁꫞「Six」☬「Seven」꫞꧂ 一个很长很长很长很长很长很长的名字"
+	sup := []supporter{{Name: long, No: 1}}
+	for i := 2; i <= 14; i++ {
+		sup = append(sup, supporter{Name: fmt.Sprint("友", i), No: i})
+	}
+	a.support = supportState{read: true, fetched: true, page: true, data: supportData{Supporters: sup}}
+	a.settings = defaultSettings()
+	a.settingsView.open, a.settingsView.tab = true, settingsAbout
+	tt := ui.NewTester(a.view, 1180, 820)
+	tt.SetPreferences(ui.Preferences{ReduceMotion: true})
+	tt.Frame()
+	// Down to the names.
+	a.settingsView.scroll[settingsAbout].Y = 1000
+	tt.Frame()
+	tt.Frame()
+	if !tt.HasText("前") || !tt.HasText("位支持者") || !tt.HasText("012") || tt.HasText("013") || !tt.HasText("下一个座位") || !tt.HasText("015") {
+		t.Fatal("no hall, or not the first twelve and the next seat")
+	}
+	if err := tt.Click("No.002 友2"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Frame()
+	if a.support.name != 0 {
+		t.Error("a name shown whole opened")
+	}
+	if err := tt.Click("No.001 " + long); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if a.support.name != 1 || !tt.HasText("第 1 排 1 座") {
+		t.Error("the name cut short does not show whole")
+	}
+	a.support.name = 0
+	tt.Frame()
+	if err := tt.Click("查看全部 14 位"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if !a.support.all || !tt.HasText("013") || !tt.HasText("014") {
+		t.Error("查看全部 does not show every name")
 	}
 }
 
@@ -102,13 +189,28 @@ func TestSupportPage(t *testing.T) {
 	}
 	tt.Advance(time.Second)
 	tt.Frame()
-	if !a.support.page || !tt.HasText("谢谢你愿意支持 Cloudy") || !tt.HasText("云边的猫") || !tt.HasText("38") {
+	if !a.support.page || !tt.HasText("让 Cloudy 一直唱下去") || !tt.HasText("云边的猫") || !tt.HasText("001") || !tt.HasText("38") {
 		t.Fatal("the page does not show, or not the wall read")
 	}
 	if !tt.HasText("微信收款码\n还没有放") && !tt.HasText("扫码请 nya 喝杯奶茶") {
 		t.Fatal("no codes")
 	}
-	_ = tt.Click("放大微信收款码")
+	// The code is covered: a first click uncovers it, and only then does
+	// a click show it large.
+	if a.support.shown {
+		t.Fatal("the code shows before it was asked for")
+	}
+	if err := tt.Click("点一下显示微信收款码"); err != nil {
+		t.Fatal(err)
+	}
+	tt.Advance(time.Second)
+	tt.Frame()
+	if !a.support.shown || a.support.large {
+		t.Fatalf("a first click: shown %v large %v, want shown only", a.support.shown, a.support.large)
+	}
+	if err := tt.Click("放大微信收款码"); err != nil {
+		t.Fatal(err)
+	}
 	tt.Advance(time.Second)
 	tt.Frame()
 	if !a.support.large {

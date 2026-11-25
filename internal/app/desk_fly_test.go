@@ -48,7 +48,7 @@ func TestDeskGlyphsLandOnTheLine(t *testing.T) {
 					// On nothing, as the lyrics' window is.
 					a.floatTheme(c)
 					ui.Box(c).Absolute().Left(40.4).Top(30.6).Children(func() {
-						a.deskLine(c, "main", m.text, m.words, pos, m.size, look, true)
+						a.deskLine(c, "main", m.text, m.words, pos, m.size, look, true, false)
 					})
 				}, 760, 120)
 				own.Frame()

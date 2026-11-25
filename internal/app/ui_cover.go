@@ -188,6 +188,9 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 
 	// It tilts toward the pointer, and swings as it is dragged.
 	px, py, over := wrap.PointerPosition()
+	if a.npFlying() {
+		over = false
+	}
 	tx, ty := float32(0), float32(0)
 	if over && !wrap.Dragging() {
 		tx = clamp1(px/size*2 - 1)
@@ -208,6 +211,7 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 	shine = wrap.AnimateTo("shine", shine, ui.Animation{Duration: 300 * time.Millisecond})
 	gx := wrap.AnimateTo("gx", px, tilt)
 	gy := wrap.AnimateTo("gy", py, tilt)
+	a.npSpot.glare, a.npSpot.shine = ui.Point{X: gx, Y: gy}, shine
 	if over || wrap.Dragging() {
 		wrap.Cursor(ui.CursorGrab)
 	}
@@ -225,6 +229,9 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 		}
 		if over {
 			scale *= 1.02
+		}
+		if a.npFlying() && !a.npOpen && a.npCoverScale > 0 {
+			scale = a.npCoverScale
 		}
 		a.npCoverScale = scale
 		box := ui.Box(c).Fill().Radius(14)
@@ -251,13 +258,17 @@ func (a *app) npCover(c *ui.Context, tr *netease.Track, art *artwork, size float
 			}
 			artImage(c, bitmap(art), 14, in)
 			if shine > 0.01 {
-				ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
-					glareShader().Draw(p, r, shader.Options{Radius: 14, Uniforms: map[string]any{
-						"Center": [2]float32{gx, gy}, "Core": r.W * 0.16, "Sigma": r.W * 0.225, "Alpha": 0.26 * shine,
-					}})
-				})
+				drawCoverGlare(c, gx, gy, 14, shine)
 			}
 		})
+	})
+}
+
+func drawCoverGlare(c *ui.Context, gx, gy, radius, shine float32) {
+	ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).PassThrough().Draw(func(p *ui.Painter, r ui.Rect) {
+		glareShader().Draw(p, r, shader.Options{Radius: radius, Uniforms: map[string]any{
+			"Center": [2]float32{gx, gy}, "Core": r.W * 0.16, "Sigma": r.W * 0.225, "Alpha": 0.26 * shine,
+		}})
 	})
 }
 

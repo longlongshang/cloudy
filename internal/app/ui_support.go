@@ -105,14 +105,14 @@ func (a *app) supportCard(k *settingsKit) {
 						if i == 0 {
 							m = 0
 						}
-						supportRound(c, s.Name, 22, 10).Margin(0, 0, 0, m)
+						a.supportRound(c, s, 22, 10).Margin(0, 0, 0, m)
 					}
 				})
 				ui.Text(c, fmt.Sprintf("已有 %d 位朋友支持过", n)).FontSize(12).TextColor(ink.muted)
 			})
 		})
 		if fillButton(c.Key("support-open"), "去支持", supportIconNext, a.pal.accent, a.pal.onAccent, false).Clicked() {
-			a.support.page, a.support.all = true, false
+			a.support.page, a.support.all, a.support.shown = true, false, false
 			a.settingsView.scroll[settingsAbout].Y = 0
 		}
 	})
@@ -131,191 +131,19 @@ func heartTile(c *ui.Context, size, radius, icon float32) {
 		})
 }
 
-// supportRound is a name's first letter on a round of its color, ringed
-// in the card's fill.
-func supportRound(c *ui.Context, name string, size, font float32) ui.Element {
-	return ui.Box(c).Size(size, size).Radius(999).Center().Shrink(0).Background(supportTint(name)).
-		Border(2, ui.RGBA(0, 0, 0, 0.12)).Children(func() {
-		ui.Text(c, supportInitial(name)).FontSize(font).FontWeight(700).TextColor(white)
-	})
-}
-
-// supportPage is the page: why, what came of it, the codes, the wall, and
-// what helps besides money.
-func (a *app) supportPage(k *settingsKit) {
-	c, ink := k.c, k.ink
-	st := &a.support
-	wall := a.supportWall()
-	fill, edge := a.cardColors()
-
-	back := ui.ButtonBase(c.Key("support-back")).Height(28).PaddingX(10).Gap(4).Radius(999).AlignItems(ui.Center).
-		AlignSelf(ui.Start).FocusRing(false).Label("返回关于").Margin(0, 0, 6, -6)
-	bg := ui.Color{}
-	if back.Hovered() {
-		bg = ink.hover
-	}
-	back.Background(back.AnimateColor("bg", bg, motionHover)).TextColor(ink.muted).Children(func() {
-		ui.Icon(c, iconBack).Size(14, 14)
-		ui.Text(c, "关于").FontSize(13)
-	})
-	if back.Clicked() {
-		st.page = false
-	}
-	ui.Text(c, "支持 Cloudy").FontSize(26).FontWeight(700).Margin(0, 40, 0, 4)
-	ui.Text(c, "与网易云音乐无关，赞助不换取任何功能。").FontSize(13).TextColor(ink.muted).Margin(6, 40, 0, 4)
-
-	// The head: the light drifting behind the heart, and a word from nya.
-	head := ui.Row(c.Key("support-head")).Margin(24, 0, 0, 0).Padding(26, 28).Gap(22).AlignItems(ui.Center).
-		Radius(20).Background(fill).Border(0.5, edge).MinHeight(170)
-	head.Draw(func(p *ui.Painter, r ui.Rect) {
-		a.supportGlow(p, r, 20, 1, p.Now().Sub(supportEpoch).Seconds())
-		if a.supportMoves() {
-			p.AnimationFrameRate(30)
+// supportRound is a supporter's picture, or the first letter of the name
+// on a round of its color while it has none or it is not read yet, ringed
+// in the card's fill. The picture fades in over the letter.
+func (a *app) supportRound(c *ui.Context, s supporter, size, font float32) ui.Element {
+	bmp := a.supportAvatar(s)
+	round := ui.Box(c).Size(size, size).Radius(999).Center().Shrink(0).Background(supportTint(s.Name)).
+		Border(2, ui.RGBA(0, 0, 0, 0.12))
+	in := artIn(round, bmp)
+	return round.Children(func() {
+		if in < 1 {
+			ui.Text(c, supportInitial(s.Name)).FontSize(font).FontWeight(700).TextColor(white).Opacity(1 - in)
 		}
-	})
-	head.Children(func() {
-		heartTile(c, 84, 26, 40)
-		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(8).Children(func() {
-			ui.Text(c, "谢谢你愿意支持 Cloudy").FontSize(22).FontWeight(700)
-			ui.Text(c, "Cloudy 是我业余时间一点点做出来的，一直免费、没有广告。你的支持会变成更多的更新、更快的修复，也让我知道有人在用它听歌。").
-				FontSize(13).LineHeight(1.75).TextColor(ink.text.Alpha(0.86)).MaxWidth(520)
-			ui.Text(c, "— nya").FontSize(12).TextColor(ink.muted)
-		})
-	})
-
-	// What came of it, as the wall's file counts it: 0 hides a number.
-	type stat struct{ n, unit, desc string }
-	var stats []stat
-	if wall.Updates > 0 {
-		stats = append(stats, stat{fmt.Sprint(wall.Updates), "次更新", "从 1.1 开始，发布在 GitHub"})
-	}
-	if wall.Feedback > 0 {
-		stats = append(stats, stat{fmt.Sprint(wall.Feedback), "条反馈", "来自 B 站评论、私信和 GitHub"})
-	}
-	stats = append(stats, stat{"0", "广告 · 付费功能", "赞助不会换来任何功能，以后也不会"})
-	ui.Row(c).Gap(12).Margin(12, 0, 0, 0).AlignItems(ui.Stretch).Children(func() {
-		for _, s := range stats {
-			ui.Column(c).Grow(1).Basis(0).MinWidth(0).Gap(3).Padding(12, 16).Radius(14).Background(fill).Border(0.5, edge).Children(func() {
-				ui.Row(c).Gap(4).AlignItems(ui.Baseline).Children(func() {
-					ui.Text(c, s.n).FontSize(20).FontWeight(700).FontFeatures("tnum")
-					ui.Text(c, s.unit).FontSize(13).FontWeight(500).TextColor(ink.text.Alpha(0.8))
-				})
-				ui.Text(c, s.desc).FontSize(12).TextColor(ink.muted).LineHeight(1.4)
-			})
-		}
-	})
-
-	// The codes.
-	m := supportMethods[st.method]
-	codes := supportCodes()
-	ui.Row(c).Margin(12, 0, 0, 0).Padding(20, 22).Gap(26).AlignItems(ui.Center).Radius(20).Background(fill).Border(0.5, edge).Children(func() {
-		ui.Column(c).Gap(12).AlignItems(ui.Center).Shrink(0).Children(func() {
-			a.segmentedControl(c.Key("support-method"), &st.method, []string{supportMethods[0].label, supportMethods[1].label}, true, nil)
-			code := ui.ButtonBase(c.Key("support-code")).Padding(8).Radius(14).FocusRing(false).Label("放大" + m.label + "收款码").Cursor(ui.CursorPointer)
-			code.Background(code.AnimateColor("tint", m.tint, ui.Animation{Duration: 300e6})).
-				Shadow(0, 8, 24, 0, m.tint.Alpha(0.25)).Children(func() {
-				supportCodeFace(c, codes[st.method], m.label, 144)
-			})
-			if code.Clicked() {
-				a.pressedFrom(code, 14)
-				st.large = true
-			}
-		})
-		ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(14).Children(func() {
-			ui.Text(c, "扫码请 nya 喝杯奶茶").FontSize(16).FontWeight(700)
-			ui.Column(c).Gap(10).Children(func() {
-				for i, line := range []string{
-					"打开" + m.app + "，扫左边的码",
-					"金额随意，一块钱也是心意",
-					"想上感谢墙？付款时备注一个昵称，或者在 B 站私信 nya",
-				} {
-					ui.Row(c).Gap(10).AlignItems(ui.Start).Children(func() {
-						ui.Box(c).Size(20, 20).Radius(999).Center().Shrink(0).Margin(1, 0, 0, 0).Background(a.pal.accent.Alpha(0.16)).Children(func() {
-							ui.Text(c, fmt.Sprint(i+1)).FontSize(11).FontWeight(700).TextColor(a.pal.accent)
-						})
-						ui.Text(c, line).FontSize(13).LineHeight(1.55).TextColor(ink.text.Alpha(0.88)).Shrink(1).MinWidth(0)
-					})
-				}
-			})
-			ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
-				if k.button("support-large", "放大收款码", iconExpand, false, false).Clicked() {
-					st.large = true
-				}
-				if k.button("support-afdian", "去爱发电", iconExternal, false, false).
-					Tooltip("在爱发电支持：可以按月赞助，留言写个昵称就能上感谢墙").Clicked() {
-					openLink(supportAfdian)
-				}
-			})
-		})
-	})
-
-	// The wall.
-	ui.Row(c).Margin(24, 16, 8, 16).AlignItems(ui.Baseline).Children(func() {
-		ui.Text(c, "感谢墙").FontSize(12.5).FontWeight(600).TextColor(ink.muted).Grow(1)
-		ui.Text(c, "只列同意公开的朋友").FontSize(12).TextColor(ink.muted.Alpha(0.8))
-	})
-	ui.Column(c).Padding(18, 20, 16, 20).Gap(14).Radius(20).Background(fill).Border(0.5, edge).Children(func() {
-		n := len(wall.Supporters)
-		ui.Row(c).AlignItems(ui.Baseline).Children(func() {
-			ui.Text(c, "这些朋友让 Cloudy 走到了今天").FontSize(15).FontWeight(700).Grow(1)
-			if n > 0 {
-				ui.Text(c, fmt.Sprintf("共 %d 位 · 最新的在前", n)).FontSize(12).TextColor(ink.muted)
-			}
-		})
-		if n == 0 {
-			ui.Text(c, "还没有名字。第一个支持的朋友，会出现在这里。").FontSize(13).TextColor(ink.muted).Margin(4, 0, 6, 0)
-			return
-		}
-		shown := wall.Supporters
-		if !st.all && len(shown) > supportWallRows {
-			shown = shown[:supportWallRows]
-		}
-		ui.Grid(c).Columns(3).GapX(10).GapY(10).Children(func() {
-			for i, s := range shown {
-				ui.Row(c.Key(i)).Padding(12, 14).Gap(10).Radius(14).Background(ink.hover).MinWidth(0).Children(func() {
-					supportRound(c, s.Name, 30, 12)
-					ui.Column(c).Grow(1).Shrink(1).MinWidth(0).Gap(2).Children(func() {
-						ui.Text(c, s.Name).FontSize(13).FontWeight(500).SingleLine()
-						note, col := s.Note, ink.text.Alpha(0.72)
-						if note == "" {
-							note, col = "没有留言", ink.muted
-						}
-						ui.Text(c, note).FontSize(12).LineHeight(1.5).TextColor(col).MaxLines(2)
-					})
-				})
-			}
-		})
-		if len(wall.Supporters) > supportWallRows {
-			label := fmt.Sprintf("查看全部 %d 位", len(wall.Supporters))
-			if st.all {
-				label = "收起"
-			}
-			ui.Row(c).Justify(ui.Center).Children(func() {
-				if k.button("support-all", label, nil, false, false).Clicked() {
-					st.all = !st.all
-				}
-			})
-		}
-	})
-
-	// What helps besides money.
-	k.group("不付钱也能帮忙", func() {
-		k.stateRow("给仓库点个 Star", "在 GitHub 的 "+releaseRepo+"，让更多人看到它", func() {
-			if k.button("support-star", "打开 GitHub", supportIconStar, false, false).Clicked() {
-				openLink(appSource)
-			}
-		})
-		k.stateRow("在 B 站一键三连", "新版本的介绍视频都发在那里", func() {
-			if k.button("support-bilibili", "打开 B 站", supportIconTV, false, false).Clicked() {
-				openLink(supportBilibili())
-			}
-		})
-		k.stateRow("告诉我哪里不好用", "很多新功能都来自大家的反馈", func() {
-			if k.button("support-feedback", "去反馈", iconComment, false, false).Clicked() {
-				st.page = false
-				a.settingsView.scroll[settingsAbout].Y = math.MaxFloat32
-			}
-		})
+		artImage(c, bmp, size/2, in)
 	})
 }
 

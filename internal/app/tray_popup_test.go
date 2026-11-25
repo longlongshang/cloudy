@@ -309,3 +309,114 @@ func TestTrayShadowWithinMargin(t *testing.T) {
 		t.Fatalf("the shadow reaches %d DIPs beside the card, past the %d of margin", side, trayPopupMargin)
 	}
 }
+
+// The tray menu opens beside the right-click point, flipping horizontally or
+// vertically near monitor edges while keeping the full 24 DIP shadow inside mon.
+func TestTrayPopupPos(t *testing.T) {
+	mon := mygo.Rectangle{X: 0, Y: 0, Width: 2560, Height: 1440}
+	win := mygo.Rectangle{Width: trayPopupWidth, Height: trayPopupHeight}
+	cardW, cardH := trayPopupWidth-2*trayPopupMargin, trayPopupHeight-2*trayPopupMargin
+
+	// Top taskbar click away from right edge: card left aligns to click.X,
+	// outer window stays inside mon.Y so the top shadow is not clipped.
+	pos := trayPopupPos(mygo.Point{X: 2208, Y: 15}, win, mon)
+	if pos.X+trayPopupMargin != 2208 || pos.Y != mon.Y {
+		t.Fatalf("top taskbar pos = %+v, want cardLeft=2208 winY=%d", pos, mon.Y)
+	}
+
+	// Overflow icon click below top bar: opens right below click.Y without
+	// being pushed down by WorkArea or icon-cell margins.
+	pos = trayPopupPos(mygo.Point{X: 2100, Y: 62}, win, mon)
+	if pos.X+trayPopupMargin != 2100 || pos.Y+trayPopupMargin != 62+trayClickGap {
+		t.Fatalf("overflow click pos = %+v, want card=(2100,%d)", pos, 62+trayClickGap)
+	}
+
+	// Click near right edge: flips leftward so card right aligns to click.X.
+	pos = trayPopupPos(mygo.Point{X: 2420, Y: 62}, win, mon)
+	if cardRight := pos.X + trayPopupMargin + cardW; cardRight != 2420 || pos.X+trayPopupWidth > mon.Width {
+		t.Fatalf("right-edge pos = %+v (cardRight=%d), want cardRight=2420 inside mon", pos, cardRight)
+	}
+
+	// Bottom-right taskbar click: flips upward and leftward.
+	mon1080 := mygo.Rectangle{X: 0, Y: 0, Width: 1920, Height: 1080}
+	pos = trayPopupPos(mygo.Point{X: 1780, Y: 1056}, win, mon1080)
+	if cardRight, cardBottom := pos.X+trayPopupMargin+cardW, pos.Y+trayPopupMargin+cardH; cardRight != 1780 || cardBottom != 1056-trayClickGap {
+		t.Fatalf("bottom-right pos = %+v (card max %d,%d), want (1780,%d)", pos, cardRight, cardBottom, 1056-trayClickGap)
+	}
+
+	// Negative-coordinate secondary display: flips up and left inside negMon.
+	negMon := mygo.Rectangle{X: -1920, Y: -1080, Width: 1920, Height: 1080}
+	pos = trayPopupPos(mygo.Point{X: -100, Y: -24}, win, negMon)
+	if pos.X < negMon.X || pos.X+trayPopupWidth > negMon.X+negMon.Width || pos.Y < negMon.Y || pos.Y+trayPopupHeight > negMon.Y+negMon.Height {
+		t.Fatalf("negative monitor pos = %+v escaped %+v", pos, negMon)
+	}
+	if cardRight, cardBottom := pos.X+trayPopupMargin+cardW, pos.Y+trayPopupMargin+cardH; cardRight != -100 || cardBottom != -24-trayClickGap {
+		t.Fatalf("negative monitor card max = (%d,%d), want (-100,%d)", cardRight, cardBottom, -24-trayClickGap)
+	}
+
+	// Extreme corners: outer 24 DIP shadow window never leaves monitor bounds.
+	tl := trayPopupPos(mygo.Point{X: 5, Y: 5}, win, mon)
+	br := trayPopupPos(mygo.Point{X: 2555, Y: 1435}, win, mon)
+	if tl.X != 0 || tl.Y != 0 || br.X+trayPopupWidth != mon.Width || br.Y+trayPopupHeight != mon.Height {
+		t.Fatalf("corner clamp tl=%+v br=%+v outside %+v", tl, br, mon)
+	}
+}
+
+// The tray popup animates its enter on both first open and reopen, settles to
+// zero pending frames after motionPane, and skips animation when motion is off.
+func TestTrayPopupEnterMotion(t *testing.T) {
+	a, tt, windows := trayPopupFixture(t)
+	openAndSettle := func(name string) {
+		t.Helper()
+		a.toggleTrayPopup()
+		tt.Frame()
+		if !tt.FramePending() {
+			t.Fatalf("%s: enter animation did not start on frame 1", name)
+		}
+		tt.Advance(motionPane.Duration + 20*time.Millisecond)
+		tt.Frame()
+		if tt.FramePending() {
+			t.Fatalf("%s: enter animation kept requesting frames after %v", name, motionPane.Duration)
+		}
+	}
+	openAndSettle("first full open")
+	a.closeTrayPopup()
+	(*windows)[len(*windows)-1].flush()
+
+	openAndSettle("reopen full")
+	a.closeTrayPopup()
+	(*windows)[len(*windows)-1].flush()
+
+	a.settings.Motion = "lite"
+	openAndSettle("lite open")
+	a.closeTrayPopup()
+	(*windows)[len(*windows)-1].flush()
+
+	a.settings.Motion = "off"
+	a.toggleTrayPopup()
+	tt.Frame()
+	if tt.FramePending() {
+		t.Fatal("motion off must not schedule enter frames")
+	}
+	a.closeTrayPopup()
+	(*windows)[len(*windows)-1].flush()
+
+	// Transform origin follows the click point relative to the placed card.
+	mon := mygo.Rectangle{X: 0, Y: 0, Width: 1920, Height: 1080}
+	win := mygo.Rectangle{Width: trayPopupWidth, Height: trayPopupHeight}
+	cases := []struct {
+		click mygo.Point
+		want  ui.Point
+	}{
+		{mygo.Point{X: 400, Y: 60}, ui.Point{X: 0, Y: 0}},    // opens down-right
+		{mygo.Point{X: 1850, Y: 60}, ui.Point{X: 1, Y: 0}},   // flips down-left
+		{mygo.Point{X: 1850, Y: 1050}, ui.Point{X: 1, Y: 1}}, // flips up-left
+		{mygo.Point{X: 100, Y: 1050}, ui.Point{X: 0, Y: 1}},  // flips up-right
+	}
+	for _, tc := range cases {
+		pos := trayPopupPos(tc.click, win, mon)
+		if got := trayPopupOrigin(tc.click, pos); got != tc.want {
+			t.Fatalf("click %+v (pos %+v): origin = %+v, want %+v", tc.click, pos, got, tc.want)
+		}
+	}
+}

@@ -72,15 +72,19 @@ type settings struct {
 	// own shader (barGlass), as by default. MenuLiquid and DialogLiquid
 	// glaze the menus and popovers, and the dialogs and the settings, in
 	// liquid glass rather than frosted, as 1.3.6 had them and they stay by
-	// default (the user, 1.3.7-test.4); GlobalGlass makes them liquid too,
-	// as it did. AnalysisFrost frosts the analysis pane's cards, liquid by
-	// default.
-	BarFrost      bool `json:"barFrost,omitempty"`
-	MenuLiquid    bool `json:"menuLiquid,omitempty"`
-	DialogLiquid  bool `json:"dialogLiquid,omitempty"`
-	AnalysisFrost bool `json:"analysisFrost,omitempty"`
+	// default (the user, 1.3.7-test.4); unset, GlobalGlass makes them
+	// liquid, as it did, but what the listener chose stands (#55).
+	// AnalysisFrost frosts the analysis pane's cards, liquid by default.
+	BarFrost      bool  `json:"barFrost,omitempty"`
+	MenuLiquid    *bool `json:"menuLiquid,omitempty"`
+	DialogLiquid  *bool `json:"dialogLiquid,omitempty"`
+	AnalysisFrost bool  `json:"analysisFrost,omitempty"`
 	// Motion is how much the app moves: full, lite or off.
 	Motion string `json:"motion,omitempty"`
+	// IgnoreSystemMotion keeps the app moving while the desktop asks for
+	// less motion (Windows's animation effects off), as Motion says: some
+	// turn those off for the desktop's speed, not to keep apps still (PR #28).
+	IgnoreSystemMotion bool `json:"ignoreSystemMotion,omitempty"`
 	// AccentCover takes the accent from the cover playing: else the app's red.
 	AccentCover bool `json:"accentCover"`
 	// Accent is the color the listener gave the app, #RRGGBB, or empty for
@@ -151,6 +155,28 @@ type settings struct {
 	// DeskWords lights the line sung word by word, as it is sung; off, the
 	// whole line is lit at once.
 	DeskWords bool `json:"deskWords"`
+	// DeskOverFullscreen keeps the desktop lyrics showing while a game or
+	// a video is full screen in front; off, they hide until it leaves, for
+	// a window over a full-screen game costs it frames.
+	DeskOverFullscreen bool `json:"deskOverFullscreen,omitempty"`
+	// DeskVertical stands the desktop lyrics up, character under character,
+	// the line sung on the right and the one under it to its left.
+	DeskVertical bool `json:"deskVertical,omitempty"`
+	// DeskHideStopped hides the desktop lyrics while nothing plays, paused
+	// or stopped, and shows them again as it plays.
+	DeskHideStopped bool `json:"deskHideStopped,omitempty"`
+	// DeskTrans shows a line's translation under it on the desktop, and
+	// DeskRoman how it reads in Latin letters (音译), both at once if both
+	// are on.
+	// DeskNext shows the line that follows when neither is shown.
+	DeskTrans bool `json:"deskTrans"`
+	DeskRoman bool `json:"deskRoman,omitempty"`
+	DeskNext  bool `json:"deskNext"`
+	// DeskColor is the color the desktop lyrics light in: "" for the
+	// cover's, "accent" for the app's, else one of deskColors.
+	DeskColor string `json:"deskColor,omitempty"`
+	// DeskFont is the desktop lyrics' own font, "" for the lyrics'.
+	DeskFont string `json:"deskFont,omitempty"`
 	// NpWholeLines lights the line sung in Now Playing whole, at once,
 	// rather than word by word as it is sung.
 	NpWholeLines bool `json:"npWholeLines,omitempty"`
@@ -282,7 +308,7 @@ type settings struct {
 }
 
 func defaultSettings() settings {
-	return settings{UpdateChecks: true, BarSpin: true, GlobalKeys: true, NotchActivity: true, Quality: "exhigh", Appearance: "system", LiquidGlass: true, SidebarGlass: true, MainGlass: true, NpLight: true, GlowLevel: 0.5, GlassClear: 0.6, GlassBend: 0.3, GlassPanels: true, Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true, LyricTrans: true, LyricBlur: true, NpCalm: true, LyricBlurLevel: 0.5, MoreWords: true, LyricTilt: 0.5, LyricBounce: 0.5, DeskWords: true}
+	return settings{UpdateChecks: true, BarSpin: true, GlobalKeys: true, NotchActivity: true, Quality: "exhigh", Appearance: "system", LiquidGlass: true, SidebarGlass: true, MainGlass: true, NpLight: true, GlowLevel: 0.5, GlassClear: 0.6, GlassBend: 0.3, GlassPanels: true, Volume: 0.8, Normalize: true, AppIcon: "dock-and-menubar", CacheMB: 2048, Captions: true, LyricTrans: true, LyricBlur: true, NpCalm: true, LyricBlurLevel: 0.5, MoreWords: true, LyricTilt: 0.5, LyricBounce: 0.5, DeskWords: true, DeskTrans: true, DeskNext: true}
 }
 
 func (s settings) playerGlass() bool {
@@ -313,9 +339,19 @@ func (s settings) frosted(scene glassScene) bool {
 	case sceneAnalysis:
 		return s.AnalysisFrost
 	case sceneDialog:
-		return !s.DialogLiquid && !s.GlobalGlass
+		return !liquidChosen(s.DialogLiquid, s.GlobalGlass)
 	}
-	return !s.MenuLiquid && !s.GlobalGlass
+	return !liquidChosen(s.MenuLiquid, s.GlobalGlass)
+}
+
+// liquidChosen is whether a place the listener chose for, or did not, is in
+// liquid glass: what they chose, else liquid under the global glass only.
+// The global glass made it liquid whatever they chose before (#55).
+func liquidChosen(chosen *bool, global bool) bool {
+	if chosen != nil {
+		return *chosen
+	}
+	return global
 }
 
 // glassClear is how clear the glass is in dark mode or light: each keeps

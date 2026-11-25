@@ -21,7 +21,7 @@ func TestReadMP4Tags(t *testing.T) {
 
 // The formats the player plays are the ones the folders list.
 func TestPlayable(t *testing.T) {
-	for ext, want := range map[string]bool{".mp3": true, ".FLAC": true, ".m4a": true, ".aac": true, ".dsf": true, ".dff": true, ".ogg": false, ".wav": false, ".txt": false} {
+	for ext, want := range map[string]bool{".mp3": true, ".FLAC": true, ".m4a": true, ".aac": true, ".dsf": true, ".dff": true, ".ogg": false, ".wav": true, ".WAV": true, ".txt": false} {
 		if Playable(ext) != want {
 			t.Errorf("%s: %v", ext, !want)
 		}

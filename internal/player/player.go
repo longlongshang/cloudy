@@ -1113,7 +1113,7 @@ func (p *Player) open(t netease.Track, level string) (*netease.Stream, stream, e
 var songURL = netease.SongURLContext
 
 // lyricsOf fetches a song's lyrics; tests keep it off the network.
-var lyricsOf = netease.Lyrics
+var lyricsOf = netease.LyricsWithRoman
 
 var errNoLyrics = errors.New("player: no lyrics")
 
@@ -1136,7 +1136,7 @@ func openLocal(path string, d int64) (*netease.Stream, stream, error) {
 	}
 	st := &netease.Stream{Size: info.Size(), Type: ext, Level: "exhigh", Path: path}
 	switch ext {
-	case "flac":
+	case "flac", "wav":
 		st.Level = "lossless"
 	case "dsf", "dff":
 		st.Level = "hires"

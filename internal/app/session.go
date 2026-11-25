@@ -15,7 +15,7 @@ import (
 // directory: on quitting, and every little while as it plays, in case the
 // app does not get to quit.
 
-func sessionPath() (string, error) {
+var sessionPath = func() (string, error) {
 	dir, err := mygo.App.Path(mygo.PathUserData)
 	if err != nil {
 		return "", err
@@ -23,10 +23,20 @@ func sessionPath() (string, error) {
 	return filepath.Join(dir, "session.json"), nil
 }
 
-// saveSession keeps where playback is, if it moved on since last kept.
+// saveSession keeps where playback is, if it moved on since last kept,
+// and drops the kept file once the queue is emptied.
 func (a *app) saveSession() {
 	s, ok := a.pl.Session()
 	if !ok {
+		if len(a.pl.Queue()) == 0 && a.savedSession != "" {
+			path, err := sessionPath()
+			if err != nil {
+				return
+			}
+			if err := os.Remove(path); err == nil || os.IsNotExist(err) {
+				a.savedSession = ""
+			}
+		}
 		return
 	}
 	b, err := json.Marshal(s)
@@ -49,6 +59,10 @@ const sessionEvery = 30 * time.Second
 // keepSession saves the session a while after playback changed, and every
 // while again as it plays. Paused, nothing is due, and the app sleeps.
 func (a *app) keepSession() {
+	if len(a.pl.Queue()) == 0 {
+		a.saveSession()
+		return
+	}
 	if a.sessionDue {
 		return
 	}

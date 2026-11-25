@@ -17,23 +17,49 @@ import (
 
 // The listener's session is NetEase's login cookie, MUSIC_U, which every
 // request carries once signed in. The app keeps it in the system's
-// keychain. Development builds keep it in a private file instead: each
-// rebuild is signed anew, and the keychain would ask before every one of
-// them read it.
+// keychain. Development builds and unsigned/ad-hoc signed macOS builds keep
+// it in a private file instead: each rebuild or update gets a new ad-hoc
+// signature, and the macOS keychain would prompt or lose access after every
+// one of them. So does a Linux desktop without a keychain (no libsecret, or
+// no Secret Service such as GNOME Keyring or KWallet running): the
+// listener would sign in again at every launch otherwise.
+
+// useSessionFile reports whether the session goes to the file from the
+// start; tests swap it.
+var useSessionFile = func() bool {
+	return mygo.IsDev() || preferSessionFile()
+}
+
+// sessionSecrets is the keychain; tests swap it.
+var sessionSecrets interface {
+	Get(key string) ([]byte, error)
+	Set(key string, value []byte) error
+	Delete(key string) error
+} = mygo.Secrets
+
+// userDataDir is where the session file goes; tests swap it.
+var userDataDir = func() (string, error) { return mygo.App.Path(mygo.PathUserData) }
 
 const sessionSecret = "netease-session"
 
 func sessionFile() (string, error) {
-	dir, err := mygo.App.Path(mygo.PathUserData)
+	dir, err := userDataDir()
 	if err != nil {
 		return "", err
 	}
 	return filepath.Join(dir, "session"), nil
 }
 
+// noKeychain reports whether err says there is no keychain to keep secrets
+// in, as on a Linux desktop without a Secret Service.
+func noKeychain(err error) bool { return errors.Is(err, errors.ErrUnsupported) }
+
 func readSession() ([]byte, error) {
-	if !mygo.IsDev() {
-		return mygo.Secrets.Get(sessionSecret)
+	if !useSessionFile() {
+		b, err := sessionSecrets.Get(sessionSecret)
+		if !noKeychain(err) {
+			return b, err
+		}
 	}
 	path, err := sessionFile()
 	if err != nil {
@@ -43,8 +69,11 @@ func readSession() ([]byte, error) {
 }
 
 func writeSession(b []byte) error {
-	if !mygo.IsDev() {
-		return mygo.Secrets.Set(sessionSecret, b)
+	if !useSessionFile() {
+		err := sessionSecrets.Set(sessionSecret, b)
+		if !noKeychain(err) {
+			return err
+		}
 	}
 	path, err := sessionFile()
 	if err != nil {
@@ -57,8 +86,7 @@ func writeSession(b []byte) error {
 }
 
 func deleteSession() {
-	if !mygo.IsDev() {
-		mygo.Secrets.Delete(sessionSecret)
+	if !useSessionFile() && !noKeychain(sessionSecrets.Delete(sessionSecret)) {
 		return
 	}
 	if path, err := sessionFile(); err == nil {
@@ -77,6 +105,7 @@ func init() {
 func RestoreSession() bool {
 	b, err := readSession()
 	if err != nil || len(b) == 0 {
+		diagf("restore session: none (%v)", err)
 		return false
 	}
 	var cookies []*http.Cookie
@@ -87,6 +116,7 @@ func RestoreSession() bool {
 		}
 	}
 	httpClient.Jar.SetCookies(siteURL, cookies)
+	diagf("restore session: kept %s, jar %s", diagCookies(cookies), diagSession())
 	return true
 }
 
@@ -99,13 +129,17 @@ func SaveSession() error {
 		}
 	}
 	if len(parts) == 0 {
+		diagf("save session: no session cookie")
 		return errors.New("no session cookie")
 	}
-	return writeSession([]byte(strings.Join(parts, "; ")))
+	err := writeSession([]byte(strings.Join(parts, "; ")))
+	diagf("save session: %s, error %v", diagSession(), err)
+	return err
 }
 
 // ClearSession forgets the session, here and in the keychain.
 func ClearSession() {
+	diagf("clear session: was %s", diagSession())
 	httpClient.Jar.SetCookies(siteURL, []*http.Cookie{
 		{Name: "MUSIC_U", Path: "/", MaxAge: -1},
 		{Name: "__csrf", Path: "/", MaxAge: -1},
@@ -185,6 +219,9 @@ func Account() (*Profile, error) {
 		Profile *Profile `json:"profile"`
 	}
 	err := get("/api/nuser/account/get", nil, &res)
+	if err == nil && res.Profile == nil {
+		diagf("account: NetEase knows no one by this session")
+	}
 	return res.Profile, err
 }
 
@@ -195,6 +232,7 @@ func QRKey() (string, error) {
 		Code   int    `json:"code"`
 		Unikey string `json:"unikey"`
 	}
+	diagf("qr login: start, jar %s", diagSession())
 	if err := eapiPost("/api/login/qrcode/unikey", map[string]any{"type": 3}, &res); err != nil {
 		return "", err
 	}
@@ -230,6 +268,7 @@ func QRCheck(key string) (code int, msg, nickname, avatar string, err error) {
 
 // Logout ends the session with NetEase too.
 func Logout() {
+	diagf("sign out")
 	post("/api/logout", url.Values{}, &struct{}{})
 	ClearSession()
 }

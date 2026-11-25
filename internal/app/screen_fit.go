@@ -49,6 +49,20 @@ func workAreas() []mygo.Rectangle {
 	return out
 }
 
+// screenAreas returns the displays whole, the primary first, taskbars and
+// all: the desktop lyrics stay where they were left, over the taskbar or
+// just above it, rather than pushed up off it.
+func screenAreas() []mygo.Rectangle {
+	if !mygo.App.IsReady() {
+		return nil
+	}
+	var out []mygo.Rectangle
+	for _, d := range mygo.Screen.Displays() {
+		out = append(out, d.Bounds)
+	}
+	return out
+}
+
 // mainWorkArea returns the work area of the display the main window is
 // most on, or the primary's.
 func (a *app) mainWorkArea() mygo.Rectangle {
@@ -81,7 +95,12 @@ func (a *app) refitFloats() {
 			*keepX, *keepY = x, y
 		}
 	}
-	refit(a.deskWin, &s.DeskX, &s.DeskY)
+	// The lyrics go back to where they were left, brought onto a screen:
+	// a game that changes the screen's resolution as it starts moves
+	// them, and they come back as it ends, where they were.
+	if a.deskWin != nil {
+		a.placeDesk(a.deskSpot(s.DeskX, s.DeskY))
+	}
 	refit(a.miniWin, &s.MiniX, &s.MiniY)
 }
 
@@ -91,7 +110,7 @@ func (a *app) resetFloatSpots() {
 	s := &a.settings
 	s.DeskX, s.DeskY, s.MiniX, s.MiniY = 0, 0, 0, 0
 	if a.deskWin != nil {
-		a.deskWin.SetPosition(spot(0, 0, deskW, deskH, 40))
+		a.placeDesk(a.deskSpot(0, 0))
 	}
 	if a.miniWin != nil {
 		a.miniWin.SetPosition(a.miniSpot(0, 0))

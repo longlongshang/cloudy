@@ -9,6 +9,8 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"netease-music-mygo/internal/netease"
 )
 
 type settingsCategory int
@@ -81,6 +83,8 @@ func (a *app) openSettingsAt(category settingsCategory) {
 // changed applies the settings everywhere and keeps them.
 func (a *app) changed() {
 	a.settings.save()
+	// Every window, the floating ones too, from their next frame.
+	ui.SetIgnoreReduceMotion(a.settings.IgnoreSystemMotion)
 	if a.win != nil {
 		// The theme source reaches the app's loop, which a view built in a
 		// test has none of.
@@ -1127,6 +1131,13 @@ func (a *app) settingsAboutPage(k *settingsKit) {
 	}
 	k.group("反馈", func() {
 		k.block("反馈 建议 问题 bug 私信 邮件", func() { a.feedbackCard(k.c, k.ink) })
+		k.row("诊断日志", "记录与网易云之间的请求和登录过程，不含 Cookie 原文。遇到登录失效时，把这个文件发给作者", func() {
+			if k.button("diag-log", "在文件夹中显示", iconFolder, false, false).Clicked() {
+				if path := netease.DiagLogPath(); path != "" {
+					mygo.Shell.ShowItemInFolder(path)
+				}
+			}
+		})
 	})
 }
 

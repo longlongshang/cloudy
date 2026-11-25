@@ -53,6 +53,29 @@ func (p *Player) PlayNext(tracks []netease.Track) int {
 	return placed
 }
 
+// PlayNow plays t at once, put right after the track that was playing,
+// and leaves what was to come as it was: a song picked from a search is
+// heard now without the queue being replaced by the search's results. A
+// radio playing ends, as a queue of its own does. t playing already goes
+// on, from where it is.
+func (p *Player) PlayNow(t netease.Track) {
+	p.endRadio()
+	if len(p.order) == 0 {
+		p.PlayQueue([]netease.Track{t}, 0)
+		return
+	}
+	if p.track != nil && p.track.ID == t.ID {
+		if !p.playing {
+			p.TogglePlay()
+		}
+		return
+	}
+	p.PlayNext([]netease.Track{t})
+	if k := slices.IndexFunc(p.queue, func(q netease.Track) bool { return q.ID == t.ID }); k >= 0 {
+		p.Jump(k)
+	}
+}
+
 // RemoveAt takes the track at pos of the play order out of the queue. The
 // track playing stays: there is nothing to play in its place.
 func (p *Player) RemoveAt(pos int) bool {

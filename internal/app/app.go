@@ -61,6 +61,8 @@ type app struct {
 	// under it; trayPopupDone stops watching for a press outside it, and
 	// trayPopupClosed is when a press outside last closed it.
 	trayPopupGlass  bool
+	trayPopupEnter  bool
+	trayPopupOrigin ui.Point
 	trayBackdrop    *ui.Bitmap
 	trayPopupDone   chan struct{}
 	trayPopupClosed time.Time
@@ -243,6 +245,8 @@ type app struct {
 	deskBtn               ui.Rect          // the player bar's button of the desktop lyrics, while it shows
 	deskFly               deskFlight       // the desktop lyrics on their way out of it or back
 	deskLineAt            ui.Rect          // where the desktop lyrics laid out their line last
+	deskStood             []deskStood      // where the standing lyrics laid out each character last
+	desk                  deskState        // the desktop lyrics' unlock button, and what they keep out of the way of
 	sleep                 sleepState       // the timer that pauses the music
 	keys                  shortcutState    // the global keys and the menu keys
 	spin                  discState        // how far the bar's cover has turned
@@ -254,6 +258,9 @@ type app struct {
 	headGone              float32          // how far the page's header has scrolled away
 	rowsRoute             route            // the page whose list last came in
 	rowsAt                time.Time        // when it started to
+	rowsPending           bool             // waiting for trackList's first layout
+	rowsWaited            time.Time        // since when
+	rowsStart, rowsCount  int              // the first song and count in the entrance batch
 	sideColor             ui.Color         // what the sidebar shows, as it eases
 	flight                coverFlight      // a cover on its way to the page it opens
 	heldRoute             route            // the page opened from a card
@@ -398,6 +405,8 @@ func Run() error {
 	a.useUpdater()
 	mygo.App.WhenReady(func() {
 		a.settings = loadSettings()
+		netease.StartDiagLog(mygo.App.Version())
+		ui.SetIgnoreReduceMotion(a.settings.IgnoreSystemMotion)
 		a.applyUpdateSource()
 		a.applyOutput()
 		a.settings.applyAppearance()

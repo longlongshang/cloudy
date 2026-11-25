@@ -699,7 +699,9 @@ func (a *app) playerBar(c *ui.Context, foreground float32) {
 					line.Label("播放栏歌名").Tooltip(tr.Name).
 						Transition(ui.ElementTransition{Animation: &motionPane, Enter: &ui.Motion{Y: 10}, Exit: &ui.Motion{Y: -10}})
 					a.barSpot.title = title.LayoutBounds()
-					a.lifted(title)
+					if a.npTitleFlying() {
+						title.Opacity(0)
+					}
 					// What it is waiting on shows in place of the artists.
 					var sub string
 					color := muted

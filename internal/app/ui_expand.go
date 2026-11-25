@@ -45,6 +45,8 @@ type flightSpot struct {
 	cover, title, scrub, play ui.Rect
 	radius                    float32  // of the cover
 	tilt                      ui.Point // the cover's current depth tilt
+	glare                     ui.Point // the cover's current glare center
+	shine                     float32  // the cover's current glare opacity
 	track, fill, smoke        ui.Color // of the progress
 }
 
@@ -72,6 +74,14 @@ func (a *app) npFlying() bool {
 	return a.motion == motionFull && a.npK > 0 && a.npK < 1 && a.barSpot.cover.W > 0 && a.npSpot.cover.W > 0
 }
 
+// npTitleFlying reports whether flights owns the song title this frame.
+// Antialiased glyphs thicken and flash if both the flying title and the
+// resting title paint over each other during the handover, so ownership
+// switches cleanly where the two coincide.
+func (a *app) npTitleFlying() bool {
+	return a.npFlying() && a.npK > flightTouch && a.npK < 1-flightTouch && a.barSpot.title.W > 0 && a.npSpot.title.W > 0
+}
+
 // flights draws what stays through Now Playing opening, at k of the way from
 // the bar, over the view: the cover, the title, the progress and the play
 // button. They are the same things going somewhere else, which is what ties
@@ -84,7 +94,10 @@ func (a *app) flights(c *ui.Context, tr *netease.Track, k float32) {
 		return
 	}
 	from, to := a.barSpot, a.npSpot
-	ink := a.pal.text.Mix(white, k)
+	// Match Now Playing's dark backdrop fade-in (easeRange(k, 0, 0.3)) so the
+	// title and play button reach white as soon as the backdrop is opaque,
+	// instead of shifting from gray to white after arriving in the view.
+	ink := a.pal.text.Mix(white, easeRange(k, 0, 0.3))
 	shown := easeRange(k, 0, flightTouch) * (1 - easeRange(k, 1-flightTouch, 1))
 	// The cover stands smaller while paused, and larger under the pointer.
 	s := a.npCoverScale
@@ -101,17 +114,25 @@ func (a *app) flights(c *ui.Context, tr *netease.Track, k float32) {
 		// Unwinding the short way, from however the record stood.
 		box.Rotate(float32(math.Remainder(float64(a.spin.at(c.Now())), 360)) * (1 - k))
 	}
+	if tx, ty := to.tilt.X*k, to.tilt.Y*k; math.Abs(float64(tx))+math.Abs(float64(ty)) > 0.05 {
+		box.RotateX(tx).RotateY(ty).Perspective(900 * max(s, 0.1))
+	}
 	if bmp == nil {
 		box.Background(white.Alpha(0.08))
 	}
-	box.Children(func() { artImage(c, bmp, radius, 1) })
-	if to.title.W > 0 {
+	box.Children(func() {
+		artImage(c, bmp, radius, 1)
+		if glare := to.shine * k; glare > 0.01 && to.cover.W > 0 && to.cover.H > 0 {
+			drawCoverGlare(c, to.glare.X*cover.W/to.cover.W, to.glare.Y*cover.H/to.cover.H, radius, glare)
+		}
+	})
+	if a.npTitleFlying() {
 		t := lerpRect(from.title, to.title, k)
 		s := lerp(13.5/22, 1, k)
 		// As wide as it is where it is, for it to break off as it does there.
 		title := ui.Text(c.Key("fly-title"), tr.Name).Absolute().Left(t.X).Top(t.Y).Width(t.W/s).FontSize(22).
-			LetterSpacing(lerp(0, -0.3, k)).SingleLine().TextColor(ink).Opacity(shown).TransformOrigin(0, 0).Scale(s, s)
-		if k < 0.5 {
+			LetterSpacing(lerp(0, -0.3, k)).SingleLine().TextColor(ink).TransformOrigin(0, 0).Scale(s, s)
+		if k < 0.3 {
 			title.FontWeight(600)
 		} else {
 			title.FontWeight(700)
@@ -151,8 +172,8 @@ func (a *app) npFlightShadow(c *ui.Context, k float32) {
 	if a.spins() {
 		shadow.Rotate(float32(math.Remainder(float64(a.spin.at(c.Now())), 360)) * (1 - k))
 	}
-	if math.Abs(float64(to.tilt.X))+math.Abs(float64(to.tilt.Y)) > 0.05 {
-		shadow.RotateX(to.tilt.X).RotateY(to.tilt.Y).Perspective(900)
+	if tx, ty := to.tilt.X*k, to.tilt.Y*k; math.Abs(float64(tx))+math.Abs(float64(ty)) > 0.05 {
+		shadow.RotateX(tx).RotateY(ty).Perspective(900)
 	}
 	shadow.AnimatePose(ui.Pose{Scale: s}, ui.Animation{Spring: ui.SpringOptions{Duration: 600 * time.Millisecond, Bounce: 0.25}})
 }

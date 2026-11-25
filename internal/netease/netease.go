@@ -220,18 +220,29 @@ func post(path string, form url.Values, out any) error {
 func do(req *http.Request, out any) error {
 	req.Header.Set("User-Agent", UserAgent)
 	req.Header.Set("Referer", apiBase+"/")
+	start := time.Now()
 	res, err := httpClient.Do(req)
 	if err != nil {
+		diagReply(req.Method, req.URL.Path, start, nil, nil, err)
 		return err
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(res.Body)
 	if err != nil {
+		diagReply(req.Method, req.URL.Path, start, nil, nil, err)
 		return err
 	}
 	var status apiError
 	if err := json.Unmarshal(body, &status); err != nil {
+		diagReply(req.Method, req.URL.Path, start, res, nil, fmt.Errorf("http %d, not JSON: %q", res.StatusCode, diagPrefix(body)))
 		return fmt.Errorf("netease: %s: %w", req.URL.Path, err)
+	}
+	diagReply(req.Method, req.URL.Path, start, res, &status, nil)
+	for _, c := range res.Cookies() {
+		if c.Name == "MUSIC_U" {
+			diagf("session now %s", diagSession())
+			break
+		}
 	}
 	if status.Code != 200 {
 		msg := status.Message
@@ -677,7 +688,8 @@ func streamFromSongURLData(code int, d songURLData, level string) (*Stream, erro
 			s.Type = "flac"
 		}
 	}
-	if s.Type != "" && s.Type != "mp3" && s.Type != "flac" {
+	// WAV is the cloud drive's, of songs the listener uploaded (#54).
+	if s.Type != "mp3" && s.Type != "flac" && s.Type != "wav" {
 		return nil, fmt.Errorf("%w %s", errUnsupportedFormat, s.Type)
 	}
 	if d.Peak != nil {
@@ -709,6 +721,20 @@ func upgradeStreamURL(raw string) string {
 // desktop client's API serves. The web API answers some songs with no
 // lyrics that the desktop client's has: their lines come from it then.
 func Lyrics(id int64) (lrc, translation, yrc string, err error) {
+	t, err := LyricsWithRoman(id)
+	return t.LRC, t.Translation, t.YRC, err
+}
+
+// LyricTexts are what Lyrics returns, and the romanization of the lines,
+// an LRC, where NetEase has one: Japanese, Korean and the like read out in
+// Latin letters, syllable by syllable.
+type LyricTexts struct {
+	LRC, Translation, YRC, Roman string
+}
+
+// LyricsWithRoman is Lyrics, with the romanization.
+func LyricsWithRoman(id int64) (LyricTexts, error) {
+	var lrc, translation, yrc string
 	var res struct {
 		Lrc struct {
 			Lyric string `json:"lyric"`
@@ -716,10 +742,13 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 		Tlyric struct {
 			Lyric string `json:"lyric"`
 		} `json:"tlyric"`
+		Romalrc struct {
+			Lyric string `json:"lyric"`
+		} `json:"romalrc"`
 	}
-	q := url.Values{"id": {strconv.FormatInt(id, 10)}, "lv": {"1"}, "tv": {"-1"}}
-	if err = get("/api/song/lyric", q, &res); err != nil {
-		return "", "", "", err
+	q := url.Values{"id": {strconv.FormatInt(id, 10)}, "lv": {"1"}, "tv": {"-1"}, "rv": {"-1"}}
+	if err := get("/api/song/lyric", q, &res); err != nil {
+		return LyricTexts{}, err
 	}
 	var words struct {
 		Lrc struct {
@@ -728,38 +757,51 @@ func Lyrics(id int64) (lrc, translation, yrc string, err error) {
 		Tlyric struct {
 			Lyric string `json:"lyric"`
 		} `json:"tlyric"`
+		Romalrc struct {
+			Lyric string `json:"lyric"`
+		} `json:"romalrc"`
 		Yrc struct {
 			Lyric string `json:"lyric"`
 		} `json:"yrc"`
 		Ytlrc struct {
 			Lyric string `json:"lyric"`
 		} `json:"ytlrc"`
+		Yromlrc struct {
+			Lyric string `json:"lyric"`
+		} `json:"yromlrc"`
 	}
 	data := map[string]any{"id": strconv.FormatInt(id, 10), "cp": false, "tv": 0, "lv": 0, "rv": 0, "kv": 0, "yv": 0, "ytv": 0, "yrv": 0}
 	if eapiPost("/api/song/lyric/v1", data, &words) == nil {
 		yrc = words.Yrc.Lyric
 	}
 	lrc, translation = res.Lrc.Lyric, res.Tlyric.Lyric
+	roman := res.Romalrc.Lyric
 	if lrc == "" {
 		lrc = words.Lrc.Lyric
 	}
 	if translation == "" {
 		translation = words.Tlyric.Lyric
 	}
+	if roman == "" {
+		roman = words.Romalrc.Lyric
+	}
 	// Word-timed lines can have different times from the ordinary LRC;
 	// use the translation paired with them when both are available.
 	if yrc != "" && words.Ytlrc.Lyric != "" {
 		translation = words.Ytlrc.Lyric
 	}
+	if yrc != "" && words.Yromlrc.Lyric != "" {
+		roman = words.Yromlrc.Lyric
+	}
 	if placeholderLyrics(lrc) && yrc == "" {
 		// None in the catalog: a song of the listener's cloud drive may
 		// have its own there (cloud_lyrics.go).
-		lrc, translation = "", ""
+		lrc, translation, roman = "", "", ""
 		if clrc, cyrc, err := cloudLyricsOf(id); err == nil {
 			lrc, yrc = clrc, cyrc
 		}
 	}
-	return lrc, translation, yrc, nil
+	return LyricTexts{LRC: lrc, Translation: translation, YRC: yrc, Roman: roman}, nil
 }
 
 // Sized asks the image CDN for a picture of n×n pixels. A local cover is

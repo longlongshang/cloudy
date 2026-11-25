@@ -1,5 +1,7 @@
 # Cloudy
 
+> **Apple Music 歌词动效分支**（`feat/apple-music-lyrics`）：基于上游 **1.3.9**，同步 `upstream/main` 后续更新。保留弹簧滚动、逐行交错延迟、景深模糊和左对齐缩放；逐字歌词继续使用原版解析与渲染，并保留上游的歌词修复和新功能。
+
 <img src="resources/icon.png" width="120" alt="Cloudy 图标">
 
 nya 维护的第三方网易云音乐 Windows 客户端（原名 Cloud-nya），基于 [egoist/mygo-cloudmusic](https://github.com/egoist/mygo-cloudmusic) 修改。用 Go 和 [MyGo](https://github.com/egoist/mygo) 编写，原生界面，不用 WebView，占用小、启动快。
@@ -43,7 +45,32 @@ nya 维护的第三方网易云音乐 Windows 客户端（原名 Cloud-nya），
 
 ## 下载
 
-到 [Releases](https://github.com/nya-owo/cloudy/releases) 下载安装包。目前只提供 Windows 版本（x64 和 ARM64）。安装包没有代码签名，Windows 可能提示“已保护你的电脑”，点“更多信息”后选“仍要运行”。
+到 [Releases](https://github.com/nya-owo/cloudy/releases) 下载安装包：
+
+- **Windows（x64 和 ARM64）**：安装包没有代码签名，Windows 可能提示“已保护你的电脑”，点“更多信息”后选“仍要运行”。
+- **macOS（Apple Silicon 和 Intel，实验性，macOS 13.0+）**：下载对应架构的 `.dmg` 并拖入「应用程序」。安装包未经过 Apple 开发者签名和公证，首次打开若提示“已损坏，无法打开”，在终端执行一次：
+
+  ```bash
+  xattr -cr /Applications/Cloudy.app
+  ```
+
+  也可以在终端用一行命令安装最新版，这样装的不会被拦：
+
+  ```bash
+  curl -fsSL https://github.com/nya-owo/cloudy/releases/latest/download/install.sh | sh
+  ```
+
+  未签名的 macOS 构建会将登录态保存在用户数据目录的私有文件（`0600`）中，避免应用内自动更新后反复弹出钥匙串密码或丢失登录。
+- **Linux（x64 和 ARM64，实验性）**：推荐用上面同一行命令安装，装在 `~/.local` 里，不需要 root，之后能在软件里自动更新。Debian / Ubuntu 也可以下载 `.deb` 用 `sudo apt install ./cloudy_*.deb` 安装，但 `.deb` 装的版本不能自动更新，新版本要再下载 `.deb` 安装。需要 GTK 3；声音走 PulseAudio / PipeWire，没有时用 ALSA。登录态存在系统钥匙串（GNOME Keyring、KWallet 等），没有钥匙串服务时改存用户数据目录里的私有文件。
+
+  Linux 版还没有在真机上充分测试，以下功能暂不可用或受限：
+  - 桌面歌词锁定后鼠标不能穿透
+  - Wayland 下窗口位置记不住，全局快捷键要经系统授权
+  - 没有任务栏缩略图和缩略图按钮
+  - 不能选择音频输出设备
+  - 本地音乐文件夹不会自动刷新
+
+  遇到问题欢迎在 [Issues](https://github.com/nya-owo/cloudy/issues) 里反馈，写上发行版和桌面环境（GNOME / KDE…，X11 还是 Wayland）。
 
 ## 原项目的功能
 

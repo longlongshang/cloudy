@@ -11,6 +11,7 @@ require (
 	github.com/mewkiz/flac v1.0.14
 	golang.org/x/image v0.46.0
 	golang.org/x/sys v0.48.0
+	golang.org/x/text v0.43.0
 	rsc.io/qr v0.2.0
 )
 
@@ -20,7 +21,6 @@ require (
 	github.com/mewkiz/pkg v0.0.0-20250417130911-3f050ff8c56d // indirect
 	github.com/mewpkg/term v0.0.0-20241026122259-37a80af23985 // indirect
 	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 )
 
-replace github.com/egoist/mygo => github.com/nya-owo/mygo v0.7.1-0.20261123122854-c6df57c0735f
+replace github.com/egoist/mygo => github.com/nya-owo/mygo v0.7.1-0.20261125023057-28b811c76ddc

@@ -186,8 +186,15 @@ func (a *app) coverCardOf(c *ui.Context, name, cover string, playCount float64, 
 // The cover rounds itself rather than its parent clipping it: a clip moved
 // by a transform, as a card lifting under the pointer, is drawn on the CPU.
 func (a *app) coverFill(c *ui.Context, url string, px int, radius float32) {
-	bmp := bitmap(a.art.get(netease.Sized(url, px), false))
+	a.coverFillBox(c, nil, url, px, 0, radius)
+}
+
+func (a *app) coverFillBox(c *ui.Context, key any, url string, px, fallbackPx int, radius float32) {
+	if key != nil {
+		c = c.Key(key)
+	}
 	box := ui.Box(c).Absolute().Top(0).Left(0).Right(0).Bottom(0).Radius(radius)
+	bmp := a.coverBitmap(box, key != nil, url, px, fallbackPx)
 	in := artIn(box, bmp)
 	if in < 1 {
 		box.Background(a.pal.hover)
@@ -419,11 +426,11 @@ func (a *app) trackRowsGrouped(c *ui.Context, tracks []netease.Track, groups []a
 	// Rows out of view are not built, their marks with them: a list
 	// scrolled away from its start or end has content under the bars.
 	a.underTop, a.underBottom = true, true
-	a.listOpened(c)
 	rows := len(items) + 1 + len(footer)
 	// Sorted by album, the albums may show as a grid of covers in place of
 	// the songs, under the same header (ui_album_grid.go).
 	grid := a.albumGridShown() && len(groups) > 1
+	a.listOpened(c, items, grid)
 	cols, lines := 1, 0
 	if grid {
 		cols = a.columns(c, 156)
@@ -525,7 +532,7 @@ func (a *app) trackRowsGrouped(c *ui.Context, tracks []netease.Track, groups []a
 				if hovered {
 					grown = 1.08
 				}
-				a.cover(c, tr.Album.PicURL, 96, 38, 8).AnimatePose(ui.Pose{Scale: grown}, ui.Snappy)
+				a.trackCover(c, tr, 96, 38, 8).AnimatePose(ui.Pose{Scale: grown}, ui.Snappy)
 			}
 			ui.Column(c).Grow(3).Basis(0).MinWidth(0).Gap(3).Children(func() {
 				name := p.text
@@ -582,6 +589,10 @@ func (a *app) trackRowsGrouped(c *ui.Context, tracks []netease.Track, groups []a
 			switch {
 			case batch:
 				a.toggleBatch(tr.ID)
+			case tr.Playable() && a.route.page == pageSearch:
+				// A song searched for joins what plays, after the one
+				// playing, rather than the results replacing the queue.
+				a.pl.PlayNow(*tr)
 			case tr.Playable():
 				a.pl.PlayQueue(tracks, i)
 			}

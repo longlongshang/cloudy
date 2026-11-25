@@ -175,7 +175,7 @@ func (a *app) installUpdate() {
 // updateError says why a check failed, in the listener's words.
 func updateError(err error) string {
 	if errors.Is(err, mygo.ErrUpdatesDisabled) {
-		return "这个版本不能自动更新：开发版，或安装位置不可写。请到 GitHub 下载新版本。"
+		return "这个版本不能自动更新：开发版、用 .deb 安装的版本，或安装位置不可写。请到 GitHub 下载新版本。"
 	}
 	return "检查更新失败，请检查网络，或到设置里换一个下载源后重试。"
 }

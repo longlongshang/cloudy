@@ -156,3 +156,18 @@ func TestSongURLFallbackFromUnsupportedLosslessFormat(t *testing.T) {
 		t.Fatalf("fallback failed: calls=%d stream=%+v", calls, st)
 	}
 }
+
+// A WAV of the cloud drive streams as it is: its type was refused as one
+// the player cannot play, and the song never played (#54).
+func TestCloudWAVStreams(t *testing.T) {
+	st, err := streamFromSongURLData(200, songURLData{URL: "http://audio.test/song.wav", Type: "WAV", Size: 1000, Level: "lossless"}, "lossless")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Type != "wav" {
+		t.Fatalf("type %q", st.Type)
+	}
+	if _, err := streamFromSongURLData(200, songURLData{URL: "http://audio.test/song.ape", Type: "ape"}, "lossless"); !errors.Is(err, errUnsupportedFormat) {
+		t.Fatalf("ape: %v", err)
+	}
+}

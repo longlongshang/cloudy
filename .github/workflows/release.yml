@@ -1,7 +1,8 @@
 # Pushing a tag such as v1.0.0 builds the apps of Windows, signs their
 # updates, and uploads them to a draft release of the tag, which is published
-# by hand: installed apps update to it then. Linux isn't built: the app hasn't
-# been tried there, so it isn't offered.
+# by hand: installed apps update to it then. macOS and Linux, experimental,
+# build in release-macos.yml and release-linux.yml, so that they never fail
+# or hold up this one.
 name: Release
 
 on:

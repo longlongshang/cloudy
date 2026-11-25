@@ -299,15 +299,20 @@ func TestGlassScenesChooseFrost(t *testing.T) {
 	if a.settings.frosted(sceneMenu) || a.settings.frosted(sceneDialog) {
 		t.Error("the global glass does not make the panes liquid, as 1.3.6 did")
 	}
+	// Chosen frosted, they stay frosted under the global glass (#55).
+	a.settings.MenuLiquid, a.settings.DialogLiquid = new(false), new(false)
+	if !a.settings.frosted(sceneMenu) || !a.settings.frosted(sceneDialog) {
+		t.Error("the global glass overrides the panes chosen frosted")
+	}
 	a.settings.GlobalGlass = false
 	if _, ok := a.barMaterial(false).(barGlass); !ok {
 		t.Error("the bar is not liquid glass by default")
 	}
-	a.settings.MenuLiquid, a.settings.DialogLiquid = true, true
+	a.settings.MenuLiquid, a.settings.DialogLiquid = new(true), new(true)
 	if g := a.paneGlass(false, 0, sceneDialog); g.frost <= a.paneGlass(false, 0, sceneMenu).frost || g.veil[1] <= 0.5 {
 		t.Errorf("a dialog's glass is not denser than a menu's: %+v", g)
 	}
-	a.settings.BarFrost, a.settings.DialogLiquid = true, false
+	a.settings.BarFrost, a.settings.DialogLiquid = true, new(false)
 	if _, ok := a.barMaterial(false).(glass.Glass); !ok {
 		t.Error("the bar frosted is not the plugin's glass")
 	}

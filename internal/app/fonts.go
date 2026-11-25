@@ -140,6 +140,9 @@ func (a *app) loadFont() {
 	if a.settings.LyricFont != "" {
 		a.loadFontOf(a.settings.LyricFont)
 	}
+	if a.settings.DeskFont != "" {
+		a.loadFontOf(a.settings.DeskFont)
+	}
 }
 
 func (a *app) loadFontOf(id string) {

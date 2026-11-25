@@ -122,9 +122,9 @@ func fetchLyrics(t netease.Track) []lyrics.Line {
 	var lines []lyrics.Line
 	var err error = errNoLyrics
 	if t.ID > 0 {
-		var lrc, trans, yrc string
-		if lrc, trans, yrc, err = lyricsOf(t.ID); err == nil {
-			lines = lyrics.Build(lrc, trans, yrc)
+		var got netease.LyricTexts
+		if got, err = lyricsOf(t.ID); err == nil {
+			lines = lyrics.AddRoman(lyrics.Build(got.LRC, got.Translation, got.YRC), got.Roman)
 		}
 	}
 	if len(lines) == 0 && t.LocalPath != "" {

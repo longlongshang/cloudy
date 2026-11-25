@@ -847,15 +847,20 @@ func (s *checkedStream) Err() error {
 	return dl.err
 }
 
-// openStream opens the song dl fetches, MP3 or FLAC, as its first bytes
-// say. An MP3 says nothing of its length: durationMs is it.
+// openStream opens the song dl fetches, MP3, FLAC, WAV or another, as its
+// first bytes say. An MP3 says nothing of its length: durationMs is it.
 func openStream(dl *download, durationMs int64) (stream, error) {
 	off := id3Size(dl)
 	if dl.waitAt(off, 4) && string(dl.peek(off, 4)) == "fLaC" {
 		return openFLACStream(dl)
 	}
 	dl.waitFor(off + 12)
-	if format := otherFormat(dl.peek(off, 12)); format == "DSD" {
+	if format := otherFormat(dl.peek(off, 12)); format == "WAV" {
+		if s, err := openWAVStream(dl); err == nil {
+			return s, nil
+		}
+		return nil, &UnsupportedError{Format: format}
+	} else if format == "DSD" {
 		if s, err := openDSDStream(dl); err == nil {
 			return s, nil
 		}
@@ -892,7 +897,7 @@ func otherFormat(head []byte) string {
 		return "AAC"
 	case len(head) >= 4 && string(head[:4]) == "OggS":
 		return "OGG"
-	case len(head) >= 4 && string(head[:4]) == "RIFF":
+	case len(head) >= 4 && (string(head[:4]) == "RIFF" || string(head[:4]) == "RF64" || string(head[:4]) == "BW64"):
 		return "WAV"
 	case len(head) >= 4 && (string(head[:4]) == "wvpk" || string(head[:4]) == "MAC "):
 		return "无损压缩（APE/WV）"

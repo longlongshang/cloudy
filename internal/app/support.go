@@ -10,9 +10,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -25,23 +27,33 @@ import (
 //go:embed support
 var supportFiles embed.FS
 
-// supportData is support/supporters.json: the wall, and the two numbers
-// the page shows of the work (0 hides one).
+// supportData is support/supporters.json: the wall, and the numbers the
+// page shows of the work (0 hides one). Issues and PRs are as GitHub
+// counted them when the file was written: the page asks GitHub for them
+// as they are now (support_counts.go) and shows these where it cannot.
 type supportData struct {
 	Updates    int         `json:"updates"`
 	Feedback   int         `json:"feedback"`
+	Issues     int         `json:"issues,omitempty"`
+	PRs        int         `json:"prs,omitempty"`
 	Supporters []supporter `json:"supporters"`
 }
 
-// A supporter is a name on the wall, newest first, and what they said.
+// A supporter is a name on the wall, newest first, and the seat it keeps:
+// No, from 1, in the order they came. Note is what one said, kept in the
+// file for 1.3.7, which shows it; the wall shows names alone.
 type supporter struct {
+	No   int    `json:"no,omitempty"`
 	Name string `json:"name"`
 	Note string `json:"note,omitempty"`
+	// Avatar is the picture its round shows, as avatars/3.png in support/
+	// (support_avatars.go): the initial where it has none.
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // supportRemote is where the wall is kept, read straight from GitHub or
 // through the update mirrors, which serve its raw files as well.
-const supportRemote = "https://raw.githubusercontent.com/" + releaseRepo + "/main/internal/app/support/supporters.json"
+const supportRemote = supportRemoteDir + "supporters.json"
 
 // supportState is the support page: shown in place of 关于, the code
 // chosen, the wall as read, and the code shown large.
@@ -51,12 +63,72 @@ type supportState struct {
 	data    supportData
 	read    bool // data holds the embedded wall, at least
 	fetched bool // the wall was asked of GitHub, this run
-	all     bool // the whole wall shows, not its first rows
+	all     bool // the whole wall shows, in a dialog
 	large   bool // the code shows large, in a dialog
+	shown   bool // the code is uncovered: each visit asks for it again
+	name    int  // the seat whose name, cut short in its row, shows whole
+	avatars supportAvatars
+	counts  supportCounts
 }
 
-// supportWallRows is how many names the wall shows before 查看全部.
-const supportWallRows = 9
+// supportWallRows is how many names the page shows before 查看全部.
+const supportWallRows = 12
+
+// supportRowSeats is how many seats a row of the seat map holds, and
+// supportBlock how many the wall offers at a time: the first 100, then,
+// those taken, the next 100.
+const (
+	supportRowSeats = 25
+	supportBlock    = 100
+)
+
+// seated is the wall in seat order, the first comer first. A supporter
+// the file gives no seat, or one another took, gets the first seat free,
+// the earlier comers (lower in the file) first.
+func (d supportData) seated() []supporter {
+	taken := map[int]bool{}
+	var out, unseated []supporter
+	for _, s := range d.Supporters {
+		if s.No > 0 && !taken[s.No] {
+			taken[s.No] = true
+			out = append(out, s)
+		} else {
+			unseated = append(unseated, s)
+		}
+	}
+	free := 1
+	for i := len(unseated) - 1; i >= 0; i-- {
+		for taken[free] {
+			free++
+		}
+		s := unseated[i]
+		s.No, taken[free] = free, true
+		out = append(out, s)
+	}
+	slices.SortFunc(out, func(x, y supporter) int { return x.No - y.No })
+	return out
+}
+
+// supportSeats is how many seats there are for seated (in seat order) and
+// the first one free: always one, the hall growing by a block when full.
+func supportSeats(seated []supporter) (seats, next int) {
+	next = 1
+	for _, s := range seated {
+		if s.No == next {
+			next++
+		}
+	}
+	most := next
+	if n := len(seated); n > 0 {
+		most = max(most, seated[n-1].No)
+	}
+	return (most + supportBlock - 1) / supportBlock * supportBlock, next
+}
+
+// seatPlace is the row and the seat in it of number no, from 1.
+func seatPlace(no int) (row, seat int) {
+	return (no-1)/supportRowSeats + 1, (no-1)%supportRowSeats + 1
+}
 
 // parseSupport reads supporters.json, dropping names left empty.
 func parseSupport(b []byte) (supportData, error) {
@@ -174,17 +246,24 @@ var supportCodes = sync.OnceValue(func() [2]*ui.Bitmap {
 
 // openSupport shows the support page, in the settings under 关于.
 func (a *app) openSupport() {
-	a.support.page, a.support.all = true, false
+	a.support.page, a.support.all, a.support.shown = true, false, false
 	a.openSettingsAt(settingsAbout)
 }
 
-// supportInitial is the letter of a name its round shows.
+// supportInitial is the letter of a name its round shows: the first
+// letter or digit, past the marks some names are dressed in (꧁꫞「…).
 func supportInitial(name string) string {
+	first := ""
 	for _, r := range name {
-		if r >= 'a' && r <= 'z' {
-			r -= 'a' - 'A'
+		if first == "" && !unicode.IsSpace(r) {
+			first = string(r)
 		}
-		return string(r)
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return string(unicode.ToUpper(r))
+		}
+	}
+	if first != "" {
+		return first
 	}
 	return "?"
 }

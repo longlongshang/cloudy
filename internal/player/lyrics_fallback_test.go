@@ -14,7 +14,7 @@ import (
 func TestLyricsFallBackToFileWhenNetEaseHasNone(t *testing.T) {
 	old := lyricsOf
 	defer func() { lyricsOf = old }()
-	lyricsOf = func(int64) (string, string, string, error) { return "", "", "", nil }
+	lyricsOf = func(int64) (netease.LyricTexts, error) { return netease.LyricTexts{}, nil }
 	dir := t.TempDir()
 	song := filepath.Join(dir, "a.mp3")
 	os.WriteFile(song, []byte("x"), 0o644)

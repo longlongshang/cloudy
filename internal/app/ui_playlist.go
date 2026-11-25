@@ -375,29 +375,45 @@ func (a *app) pageAura(page ui.Element, url string) {
 	})
 }
 
+type stackCover struct {
+	key any
+	url string
+}
+
 // coverStack piles the covers of the first songs beside what a playlist says,
 // and fans them out under the pointer, as the daily card's. A narrow window
 // has no room for it, nor a list of a single album.
 func (a *app) coverStack(c *ui.Context, pl *netease.Playlist) {
-	var urls []string
+	var items []stackCover
 	for i := range pl.Tracks {
-		if url := pl.Tracks[i].Album.PicURL; url != "" && !slices.Contains(urls, url) {
-			if urls = append(urls, url); len(urls) == 3 {
-				break
-			}
+		url := pl.Tracks[i].Album.PicURL
+		if url == "" || slices.ContainsFunc(items, func(it stackCover) bool { return it.url == url }) {
+			continue
+		}
+		items = append(items, stackCover{key: a.trackCoverIdentity(&pl.Tracks[i]), url: url})
+		if len(items) == 3 {
+			break
 		}
 	}
-	a.coverStackURLs(c, urls)
+	a.coverStackItems(c, items)
 }
 
 // coverStackURLs piles the covers of a page's first songs, where there is
 // room for three.
 func (a *app) coverStackURLs(c *ui.Context, urls []string) {
+	items := make([]stackCover, len(urls))
+	for i, url := range urls {
+		items[i] = stackCover{url: url}
+	}
+	a.coverStackItems(c, items)
+}
+
+func (a *app) coverStackItems(c *ui.Context, items []stackCover) {
 	w, _ := c.Size()
 	if w-a.sideWidth(w) < 860 {
 		return
 	}
-	if len(urls) < 3 {
+	if len(items) < 3 {
 		return
 	}
 	stack := ui.Box(c.Key("stack")).Size(204, 164).Shrink(0).AlignSelf(ui.Center).Label("页面中的封面")
@@ -413,7 +429,7 @@ func (a *app) coverStackURLs(c *ui.Context, urls []string) {
 			cov := ui.Box(c.Key(i)).Absolute().Right(0).Top(16).Size(132, 132).Radius(14).
 				Opacity(1-0.14*k).Shadow(0, 10, 22, -6, ui.RGBA(0, 0, 0, 0.4))
 			cov.AnimatePose(pose, spring)
-			cov.Children(func() { a.coverFill(c, urls[i], 240, 14) })
+			cov.Children(func() { a.coverFillBox(c, items[i].key, items[i].url, 240, 96, 14) })
 		}
 	})
 }
@@ -528,34 +544,116 @@ func (a *app) playlistTop(c *ui.Context) {
 	})
 }
 
-// How the first rows of a list come in, one after another, once it opens.
+// How the visible rows of a list come in, one after another, once it opens.
 const (
-	rowsComing = 14
-	rowStep    = 24 * time.Millisecond
-	rowTime    = 280 * time.Millisecond
+	rowStep   = 24 * time.Millisecond
+	rowTime   = 280 * time.Millisecond
+	rowSpread = 360 * time.Millisecond
+	// rowsWaitMost is how long the rows wait for the list's first layout
+	// before showing without their entrance: a list that is built but not
+	// laid out, as in a minimized window, would otherwise keep them hidden
+	// and ask for frames on end.
+	rowsWaitMost = 250 * time.Millisecond
 )
 
-// listOpened says that the list of this page shows from now on: a cover on
-// its way gets a head start, and back to a list, it is there already.
-func (a *app) listOpened(c *ui.Context) {
-	if a.rowsRoute == a.route {
-		return
+// rowsWaitedOut drops the entrance once the rows have waited for the
+// list's layout too long.
+func (a *app) rowsWaitedOut(c *ui.Context) bool {
+	if a.rowsPending && c.Now().Sub(a.rowsWaited) > rowsWaitMost {
+		a.rowsPending, a.rowsStart, a.rowsCount = false, 0, 0
+		return true
 	}
-	a.rowsRoute, a.rowsAt = a.route, c.Now()
-	switch {
-	case a.pageDir < 0:
-		a.rowsAt = time.Time{}
-	case a.flight.url != "":
-		a.rowsAt = a.rowsAt.Add(180 * time.Millisecond)
-	}
+	return false
 }
 
-// rowIn returns how far row i has come in, from 0 to 1.
+// listOpened prepares the one-time entrance for the tracks visible when this
+// page's list first lays out: a cover on its way gets a head start, and back
+// to a list, it is there already.
+func (a *app) listOpened(c *ui.Context, items []int, grid bool) {
+	if a.rowsRoute != a.route {
+		if len(items) == 0 {
+			return
+		}
+		a.rowsRoute = a.route
+		a.rowsPending, a.rowsStart, a.rowsCount = false, 0, 0
+		if grid || a.pageDir < 0 || a.motion != motionFull {
+			a.rowsAt = time.Time{}
+			return
+		}
+		a.rowsAt = c.Now()
+		if a.flight.url != "" {
+			a.rowsAt = a.rowsAt.Add(180 * time.Millisecond)
+		}
+		// An empty list shown earlier on this route may already have laid out
+		// trackList; reset it so Visible waits for these tracks to lay out.
+		if first, last := a.trackList.Visible(); last >= first {
+			a.trackList = ui.ListState{}
+			a.trackList.Visible()
+		}
+		a.rowsPending, a.rowsWaited = true, c.Now()
+		c.AnimationFrame()
+		return
+	}
+	if !a.rowsPending || a.rowsWaitedOut(c) {
+		return
+	}
+	if grid || len(items) == 0 || a.motion != motionFull {
+		a.rowsPending, a.rowsStart, a.rowsCount = false, 0, 0
+		return
+	}
+	first, last := a.trackList.Visible()
+	if last < first {
+		c.AnimationFrame()
+		return
+	}
+	a.rowsPending = false
+	a.rowsStart, a.rowsCount = visibleTrackRange(items, first, last)
+}
+
+// visibleTrackRange maps trackList's visible row range [first, last] to the
+// contiguous song indices it covers, skipping the header, group titles, and
+// footers.
+func visibleTrackRange(items []int, first, last int) (start, count int) {
+	if last < first || len(items) == 0 {
+		return 0, 0
+	}
+	lo := max(0, first-1)
+	hi := min(len(items)-1, last-1)
+	end := -1
+	for slot := lo; slot <= hi; slot++ {
+		if idx := items[slot]; idx >= 0 {
+			if end < 0 {
+				start = idx
+			}
+			end = idx
+		}
+	}
+	if end < 0 {
+		return 0, 0
+	}
+	return start, end - start + 1
+}
+
+// rowIn returns how far song i has come in, from 0 to 1.
 func (a *app) rowIn(c *ui.Context, i int) float32 {
-	if a.motion != motionFull || i >= rowsComing {
+	if a.motion != motionFull {
 		return 1
 	}
-	t := float32(c.Now().Sub(a.rowsAt)-time.Duration(i)*rowStep) / float32(rowTime)
+	if a.rowsPending && !a.rowsWaitedOut(c) {
+		c.AnimationFrame()
+		return 0
+	}
+	if a.rowsCount <= 0 || i < a.rowsStart || i >= a.rowsStart+a.rowsCount {
+		return 1
+	}
+	intervals := time.Duration(a.rowsCount - 1)
+	step := min(rowStep, rowSpread/max(1, intervals))
+	elapsed := c.Now().Sub(a.rowsAt)
+	if elapsed >= rowTime+intervals*step {
+		a.rowsCount = 0
+		return 1
+	}
+	t := float32(elapsed-time.Duration(i-a.rowsStart)*step) / float32(rowTime)
 	if t >= 1 {
 		return 1
 	}

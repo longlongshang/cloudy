@@ -1,5 +1,23 @@
 {
   "updates": 37,
   "feedback": 0,
-  "supporters": []
+  "issues": 11,
+  "prs": 17,
+  "supporters": [
+    {"no": 15, "name": "ThinkRR_Studio", "avatar": "avatars/15.png"},
+    {"no": 14, "name": "墨白", "avatar": "avatars/14.png"},
+    {"no": 13, "name": "life38", "avatar": "avatars/13.png"},
+    {"no": 12, "name": "ANCHOR", "avatar": "avatars/12.png"},
+    {"no": 11, "name": "Azurenigmas", "avatar": "avatars/11.png"},
+    {"no": 10, "name": "饿灵炒粉", "avatar": "avatars/10.png"},
+    {"no": 9, "name": "Neesh", "avatar": "avatars/9.png"},
+    {"no": 8, "name": "氧化钙泡饭", "avatar": "avatars/8.png"},
+    {"no": 7, "name": "江远茶白", "avatar": "avatars/7.png"},
+    {"no": 6, "name": "云村用户287130", "avatar": "avatars/6.png"},
+    {"no": 5, "name": "抬手可摘未央月", "avatar": "avatars/5.png"},
+    {"no": 4, "name": "未署名", "avatar": "avatars/4.png"},
+    {"no": 3, "name": "Bamboo", "avatar": "avatars/3.png"},
+    {"no": 2, "name": "Young丶楚楠", "avatar": "avatars/2.png"},
+    {"no": 1, "name": "꧁꫞「Six」☬「Seven」꫞꧂", "avatar": "avatars/1.png"}
+  ]
 }

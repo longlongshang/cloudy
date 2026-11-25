@@ -128,21 +128,37 @@ func eapiSend(ctx context.Context, as eapiAs, path string, data map[string]any, 
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	// Sent by hand: the jar would add the site's cookies to these.
+	start := time.Now()
 	res, err := (&http.Client{Timeout: httpClient.Timeout}).Do(req)
 	if err != nil {
+		diagReply("EAPI", path, start, nil, nil, err)
 		return err
 	}
 	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	var status apiError
+	switch {
+	case err != nil:
+		diagReply("EAPI", path, start, nil, nil, err)
+	case json.Unmarshal(body, &status) != nil:
+		diagReply("EAPI", path, start, res, nil, fmt.Errorf("http %d, not JSON: %q", res.StatusCode, diagPrefix(body)))
+	default:
+		diagReply("EAPI", path, start, res, &status, nil)
+	}
 	// Keep what it sets for the site, whichever host set it: not for a
 	// session of its own, which may no longer be the one signed in.
 	if set := res.Cookies(); len(set) > 0 && as.cookies == nil {
+		session := false
 		for _, c := range set {
 			c.Domain = ""
 			c.Path = "/"
+			session = session || c.Name == "MUSIC_U"
 		}
 		httpClient.Jar.SetCookies(siteURL, set)
+		if session {
+			diagf("session now %s", diagSession())
+		}
 	}
-	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return err
 	}

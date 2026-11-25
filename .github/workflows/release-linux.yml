@@ -1,0 +1,90 @@
+# Experimental Linux builds (amd64 and arm64), kept separate from release.yml
+# so a failure here never fails or blocks the Windows release. Triggered on
+# v* tags (or manually via workflow_dispatch) and uploads the Debian
+# packages, update archives, install.sh, and signed manifests to the tag's
+# release once Release has created it.
+name: Release (Linux)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload (e.g. v1.3.10)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-linux-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Check the version and signing key
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version mygo.json)"
+          test "$TAG" = "v$version"
+          test -n "$MYGO_UPDATER_PRIVATE_KEY"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # MyGo needs no cgo: both architectures build on this runner.
+      - name: Build Linux apps and signed updates
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go tool mygo build -platform "linux/amd64,linux/arm64"
+      - name: Wait for release and upload Linux assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version mygo.json)"
+          slug="$(jq -r .slug mygo.json)"
+          out="$(jq -r '.out // "dist"' mygo.json)"
+
+          # release.yml's draft-release job creates the tag's release; wait
+          # briefly in case it is still starting.
+          found=0
+          for _ in $(seq 1 18); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              found=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "Release $TAG does not exist yet; run the Release workflow first." >&2
+            exit 1
+          fi
+
+          # Packages, update archives and install.sh (which installs the
+          # archive in ~/.local, where the app updates itself, on Linux, and
+          # the app in /Applications without Gatekeeper's prompt on macOS)
+          # go before the manifests, so installed apps never see a manifest
+          # pointing at a missing archive. SHA256SUMS stays out, matching
+          # release.yml.
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$out"/linux-amd64/*.deb \
+            "$out/linux-amd64/${slug}-${version}-linux-amd64.tar.gz" \
+            "$out"/linux-arm64/*.deb \
+            "$out/linux-arm64/${slug}-${version}-linux-arm64.tar.gz" \
+            "$out/linux-amd64/install.sh"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$out/linux-amd64/update-linux-amd64.json" \
+            "$out/linux-arm64/update-linux-arm64.json"

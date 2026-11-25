@@ -1,6 +1,8 @@
 package app
 
 import (
+	"image"
+	"math"
 	"testing"
 	"time"
 
@@ -121,5 +123,140 @@ func TestCoverSlidesWithTheSong(t *testing.T) {
 		if r2, _ := tt.Find("专辑封面"); r2.X < r.X-2 || r2.X > r.X+2 {
 			t.Errorf("%s: the cover rests at %v, not %v", step.name, r2, r)
 		}
+	}
+}
+
+// coverRegionDiff returns the mean per-pixel channel difference inside rect r
+// (in DIPs) between two frames.
+func coverRegionDiff(p, q *image.RGBA, r ui.Rect, scale float32) float64 {
+	b := p.Bounds()
+	x0 := max(b.Min.X, int(r.X*scale))
+	y0 := max(b.Min.Y, int(r.Y*scale))
+	x1 := min(b.Max.X, int((r.X+r.W)*scale))
+	y1 := min(b.Max.Y, int((r.Y+r.H)*scale))
+	var sum, n int64
+	for y := y0; y < y1; y += 2 {
+		for x := x0; x < x1; x += 2 {
+			u, v := p.RGBAAt(x, y), q.RGBAAt(x, y)
+			sum += int64(absInt(int(u.R)-int(v.R)) + absInt(int(u.G)-int(v.G)) + absInt(int(u.B)-int(v.B)))
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return float64(sum) / float64(n)
+}
+
+// Re-entering Now Playing with Ctrl+L while the pointer rests on the cover used
+// to snap between the flat flying cover and the tilted resting cover on both
+// exit and landing, without a transition animation.
+func TestCoverTiltTransitionsOnNowPlayingToggle(t *testing.T) {
+	a := newTestApp()
+	a.settings = defaultSettings()
+	a.settings.BarSpin = false
+	a.settings.Smoke = false
+	a.settings.NpCalm = false
+	url := "https://example.com/tilt-cover.jpg"
+	markArt(a, url, 120)
+	markArt(a, url, 600)
+	a.art.add(netease.Sized(url, 600)+"#backdrop", a.art.peek(netease.Sized(url, 120)))
+	tr := netease.Track{ID: 1, Name: "NIB", Duration: 180000}
+	tr.Album.PicURL = url
+	a.pl.Cue([]netease.Track{tr})
+	a.nowPlaying = true
+
+	tt := ui.NewTester(a.view, 1100, 760)
+	settle := func() {
+		for range 4 {
+			tt.Frame()
+			tt.Advance(time.Second)
+		}
+		tt.Frame()
+	}
+	settle()
+
+	r, ok := tt.Find("专辑封面")
+	if !ok {
+		t.Fatal("no cover")
+	}
+	// Rest the pointer near a corner so the cover tilts in 3D perspective.
+	mx, my := r.X+r.W*0.15, r.Y+r.H*0.15
+	tt.Move(mx, my)
+	settle()
+
+	settledTilt := a.npSpot.tilt
+	if math.Abs(float64(settledTilt.X)) < 2 || math.Abs(float64(settledTilt.Y)) < 2 {
+		t.Fatalf("expected settled off-center tilt, got %+v", settledTilt)
+	}
+	pad := ui.Rect{X: r.X - 24, Y: r.Y - 24, W: r.W + 48, H: r.H + 48}
+	scale := float32(tt.Image().Bounds().Dx()) / 1100
+
+	// Ctrl+L #1: leave Now Playing with the pointer still on the cover.
+	// The handover from the tilted cover to the flying cover must not snap flat.
+	prev := grab(tt)
+	var prevFlying bool
+	var closeHandoverDiff float64
+	a.nowPlaying = false
+	for i := 0; i < 6; i++ {
+		tt.Advance(motionFrame)
+		tt.Frame()
+		cur := grab(tt)
+		flying := a.npFlying()
+		if !prevFlying && flying {
+			closeHandoverDiff = coverRegionDiff(prev, cur, pad, scale)
+		}
+		prevFlying = flying
+		prev = cur
+	}
+	if closeHandoverDiff == 0 {
+		t.Fatal("closing Now Playing never entered flight")
+	}
+	if closeHandoverDiff > 4 {
+		t.Errorf("close handover snapped (cover diff %.2f on first closing flight frame)", closeHandoverDiff)
+	}
+	settle()
+
+	// Ctrl+L #2: re-enter Now Playing with the pointer still resting on the cover.
+	a.nowPlaying = true
+	tt.Frame()
+	prev = grab(tt)
+	prevFlying = false
+	var landDiff float64
+	var tiltBeforeLand ui.Point
+	var tiltSteps int
+	var lastTilt ui.Point
+	for i := 0; i < 80; i++ {
+		tt.Advance(motionFrame)
+		tt.Frame()
+		cur := grab(tt)
+		flying := a.npFlying()
+		d := coverRegionDiff(prev, cur, pad, scale)
+		if flying {
+			tiltBeforeLand = a.npSpot.tilt
+		}
+		if prevFlying && !flying {
+			landDiff = d
+		}
+		if !flying && i > 0 {
+			if math.Abs(float64(a.npSpot.tilt.X-lastTilt.X))+math.Abs(float64(a.npSpot.tilt.Y-lastTilt.Y)) > 0.15 {
+				tiltSteps++
+			}
+		}
+		lastTilt = a.npSpot.tilt
+		prevFlying = flying
+		prev = cur
+	}
+	if math.Abs(float64(tiltBeforeLand.X))+math.Abs(float64(tiltBeforeLand.Y)) > 0.2 {
+		t.Errorf("cover pre-tilted while hidden during opening flight: %+v", tiltBeforeLand)
+	}
+	if landDiff > 4 {
+		t.Errorf("re-enter landing snapped (cover diff %.2f on landing frame)", landDiff)
+	}
+	if tiltSteps < 5 {
+		t.Errorf("cover did not animate into perspective tilt after landing (only %d moving frames, final tilt %+v)", tiltSteps, a.npSpot.tilt)
+	}
+	if math.Abs(float64(a.npSpot.tilt.X-settledTilt.X)) > 0.3 || math.Abs(float64(a.npSpot.tilt.Y-settledTilt.Y)) > 0.3 {
+		t.Errorf("cover did not reach settled tilt %+v, got %+v", settledTilt, a.npSpot.tilt)
 	}
 }

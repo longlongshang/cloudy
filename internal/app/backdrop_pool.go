@@ -307,7 +307,6 @@ func (ls *leafState) step(dt, aspect float32, drift float64, drops *[sceneDrops]
 	if dt <= 0 {
 		return
 	}
-	afloat := 0
 	for i := range ls.leaves {
 		l := &ls.leaves[i]
 		if !l.alive {
@@ -342,9 +341,19 @@ func (ls *leafState) step(dt, aspect float32, drift float64, drops *[sceneDrops]
 		l.turn += l.spin * dt
 		if l.x < -leafEdge || l.x > aspect+leafEdge || l.y < -leafEdge || l.y > 1+leafEdge {
 			l.alive, l.wait = false, 1+5*rand.Float32()
-			continue
 		}
-		afloat++
+	}
+	// Leaves in the picture, and those on their way into it.
+	seen, coming := 0, 0
+	for i := range ls.leaves {
+		l := &ls.leaves[i]
+		switch {
+		case !l.alive:
+		case l.inPicture(aspect):
+			seen++
+		case l.inward(aspect):
+			coming++
+		}
 	}
 	for i := range ls.leaves {
 		l := &ls.leaves[i]
@@ -352,12 +361,48 @@ func (ls *leafState) step(dt, aspect float32, drift float64, drops *[sceneDrops]
 			continue
 		}
 		l.wait -= dt
-		// Never fewer than three afloat, of which one may be at an edge.
-		if l.wait <= 0 || afloat < 3 {
+		// Never fewer than three in the picture or coming into it.
+		if l.wait <= 0 || seen+coming < 3 {
 			ls.enter(l, aspect)
-			afloat++
+			coming++
 		}
 	}
+	// And never fewer than two in the picture: one leaving it while
+	// another is still on its way in would leave one alone. A leaf out of
+	// the picture is not to be seen, so one of them, or a new one, moves
+	// up to the edge it is coming in by, unseen still.
+	for i := range ls.leaves {
+		if seen >= 2 {
+			break
+		}
+		l := &ls.leaves[i]
+		if l.alive && l.inPicture(aspect) {
+			continue
+		}
+		if !l.alive || !l.inward(aspect) {
+			ls.enter(l, aspect)
+		}
+		l.toEdge(aspect)
+		seen++
+	}
+}
+
+// inPicture reports whether any of l may be in the picture.
+func (l *poolLeaf) inPicture(aspect float32) bool {
+	return l.x > -l.half && l.x < aspect+l.half && l.y > -l.half && l.y < 1+l.half
+}
+
+// inward reports whether l is headed toward the middle of the picture.
+func (l *poolLeaf) inward(aspect float32) bool {
+	return (aspect/2-l.x)*l.vx+(0.5-l.y)*l.vy > 0
+}
+
+// toEdge moves l, out of the picture, to the nearest point at which it
+// starts to come into it.
+func (l *poolLeaf) toEdge(aspect float32) {
+	in := l.half - 0.002
+	l.x = min(max(l.x, -in), aspect+in)
+	l.y = min(max(l.y, -in), 1+in)
 }
 
 // enter brings l in at some point of some edge, headed inward, some way

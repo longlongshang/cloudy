@@ -1,0 +1,85 @@
+# Experimental macOS builds (arm64 and amd64), kept separate from release.yml
+# so macOS runner queue delays or failures never block Windows releases.
+# Triggered on v* tags (or manually via workflow_dispatch) and uploads the
+# disk images, update archives, and signed manifests to the tag's release once
+# Release has created it.
+name: Release (macOS)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and upload (e.g. v1.3.9)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-macos-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - name: Check the version and signing key
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version mygo.json)"
+          test "$TAG" = "v$version"
+          test -n "$MYGO_UPDATER_PRIVATE_KEY"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build macOS apps and signed updates
+        env:
+          MYGO_UPDATER_PRIVATE_KEY: ${{ secrets.MYGO_UPDATER_PRIVATE_KEY }}
+        run: go tool mygo build -platform "darwin/arm64,darwin/amd64"
+      - name: Wait for release and upload macOS assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version mygo.json)"
+          slug="$(jq -r .slug mygo.json)"
+          out="$(jq -r '.out // "dist"' mygo.json)"
+
+          # release.yml's draft-release job creates the tag's release; wait
+          # briefly in case it is still starting.
+          found=0
+          for _ in $(seq 1 18); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+              found=1
+              break
+            fi
+            sleep 10
+          done
+          if [ "$found" -ne 1 ]; then
+            echo "Release $TAG does not exist yet; run the Release workflow first." >&2
+            exit 1
+          fi
+
+          # Upload installers and update archives before manifests so installed
+          # apps never see a manifest pointing at a missing archive. Leave out
+          # install.sh and SHA256SUMS, matching release.yml.
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$out/darwin-arm64/${slug}-${version}-arm64.dmg" \
+            "$out/darwin-arm64/${slug}-${version}-darwin-arm64.tar.gz" \
+            "$out/darwin-amd64/${slug}-${version}-amd64.dmg" \
+            "$out/darwin-amd64/${slug}-${version}-darwin-amd64.tar.gz"
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "$out/darwin-arm64/update-darwin-arm64.json" \
+            "$out/darwin-amd64/update-darwin-amd64.json"
